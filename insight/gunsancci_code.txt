@@ -1,0 +1,188 @@
+# Gunsancci(군산상공회의소) 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+
+### 기본 정보
+- **사이트 URL**: https://gunsancci.korcham.net
+- **대상 페이지**: https://gunsancci.korcham.net/front/board/boardContentsListPage.do?boardId=10573&menuId=5135
+- **사이트 코드**: gunsancci
+- **기술 스택**: JavaScript 기반 게시판 시스템, Korcham.net 플랫폼
+
+### 사이트 구조 특징
+- **페이지네이션**: JavaScript 기반 go_Page() 함수 (yongincci와 동일)
+- **상세 페이지 접근**: JavaScript contentsView() 함수로 content ID 기반 접근
+- **인코딩**: UTF-8 (한글 파일명 처리 필요)
+- **SSL**: 정상 처리 가능
+
+## 기술적 구현 특징
+
+### 1. 기존 Yongincci 스크래퍼 기반 수정
+```python
+class EnhancedGunsancciScraper(StandardTableScraper):
+    """군산상공회의소 공지사항 스크래퍼 - 향상된 버전"""
+    
+    def __init__(self):
+        super().__init__()
+        self.base_url = "https://gunsancci.korcham.net"
+        self.list_url = "https://gunsancci.korcham.net/front/board/boardContentsListPage.do?boardId=10573&menuId=5135"
+        
+        # 특화 설정 - 타임아웃 증가
+        self.timeout = 60
+        self.delay_between_requests = 3
+        
+        # JavaScript 기반 상세 페이지 URL
+        self.detail_base_url = "https://gunsancci.korcham.net/front/board/boardContentsView.do"
+```
+
+### 2. JavaScript 렌더링 필수
+- BeautifulSoup으로는 목록 파싱 실패 (JavaScript 렌더링 필요)
+- Playwright 사용하여 동적 콘텐츠 로드 후 파싱
+- 타임아웃 설정: 60초로 충분히 증가
+
+### 3. 상세 페이지 접근 방식
+```python
+def get_detail_page_with_playwright(self, content_id: str) -> str:
+    # JavaScript 함수 실행으로 상세 페이지 접근
+    page.evaluate(f"contentsView('{content_id}')")
+    
+    # 페이지 전환 대기
+    page.wait_for_url("**/boardContentsView.do**", timeout=30000)
+    page.wait_for_load_state('networkidle', timeout=30000)
+    page.wait_for_timeout(5000)  # 추가 대기시간
+```
+
+## 주요 해결책
+
+### 1. 한글 파일명 처리
+- UTF-8 인코딩으로 한글 파일명 정상 처리
+- 파일 다운로드 시 filename 헤더 처리 완료
+- 특수문자 포함 파일명 sanitize 처리
+
+### 2. JavaScript 기반 페이지네이션
+- go_Page() 함수 기반 URL 구성
+- page 파라미터로 페이지네이션 처리
+```python
+def get_list_url(self, page_num: int) -> str:
+    if page_num == 1:
+        return self.list_url
+    else:
+        return f"{self.list_url}&page={page_num}"
+```
+
+### 3. 동적 콘텐츠 로딩 최적화
+- Playwright 타임아웃 설정: 60초
+- networkidle 상태 대기로 완전한 로딩 보장
+- 추가 대기시간(3-5초)으로 안정성 확보
+
+## 테스트 결과
+
+### 스크래핑 성공률
+- **총 공고 수**: 15개 (1페이지)
+- **성공 처리**: 15개 (100%)
+- **첨부파일 다운로드**: 14개 파일 성공
+- **평균 처리 시간**: 공고당 약 8-10초
+
+### 파일 다운로드 통계
+```
+총 다운로드 파일: 14개
+- PDF 파일: 10개
+- HWP 파일: 3개  
+- JPG 파일: 1개
+
+파일 크기 범위: 36KB ~ 315KB
+평균 파일 크기: 약 150KB
+
+주요 파일 유형:
+- 교육 안내서 (PDF/HWP)
+- 사업 안내서 (PDF/HWP)
+- 조사표 (PDF)
+- 홍보 이미지 (JPG)
+```
+
+### 처리 세부 사항
+- **페이지 1**: 15개 공고 모두 성공
+- **페이지 2**: Connection 오류로 중단 (서버 측 제한)
+- **본문 파싱**: 대부분 성공, 일부 짧은 내용 경고
+- **메타데이터**: 제목, URL, content_id 정상 추출
+
+## 재사용 가능한 패턴
+
+### 1. Korcham.net 계열 사이트 공통 패턴
+```python
+# 공통 URL 구조
+base_url = "https://{sitename}cci.korcham.net"
+list_url = f"{base_url}/front/board/boardContentsListPage.do?boardId={board_id}&menuId={menu_id}"
+detail_base_url = f"{base_url}/front/board/boardContentsView.do"
+
+# 공통 JavaScript 함수
+contentsView(content_id)  # 상세 페이지 접근
+go_Page(page_num)        # 페이지네이션
+```
+
+### 2. JavaScript 렌더링 최적화 패턴
+```python
+# 타임아웃 설정
+page.set_default_timeout(60000)
+
+# 로딩 완료 대기
+page.goto(url, timeout=60000)
+page.wait_for_load_state('networkidle', timeout=60000)
+page.wait_for_timeout(3000)  # 추가 대기
+```
+
+### 3. 에러 처리 및 복구 패턴
+```python
+try:
+    # JavaScript 함수 실행
+    page.evaluate(f"contentsView('{content_id}')")
+    page.wait_for_url("**/boardContentsView.do**", timeout=30000)
+except Exception as e:
+    # 직접 URL 접근으로 폴백
+    direct_url = f"{self.detail_base_url}?contentsId={content_id}"
+    page.goto(direct_url, timeout=60000)
+```
+
+## 특별한 기술적 도전과 해결책
+
+### 1. 동적 페이지 로딩 문제
+**문제**: BeautifulSoup으로 목록 파싱 시 빈 결과
+**해결**: Playwright로 JavaScript 렌더링 후 파싱
+
+### 2. 네트워크 연결 안정성
+**문제**: 2페이지 접근 시 Connection aborted 오류
+**해결**: 
+- 요청 간격 3초로 증가
+- 타임아웃 60초로 설정
+- 재시도 로직 추가 고려
+
+### 3. 파일 다운로드 최적화
+**해결**:
+- 한글 파일명 UTF-8 처리
+- 파일 크기 검증 (36KB~315KB 범위)
+- 다운로드 완료 로그 상세화
+
+### 4. 메모리 및 성능 최적화
+**해결**:
+- Playwright 브라우저 세션 적절한 관리
+- 페이지별 브라우저 종료로 메모리 누수 방지
+- 대기 시간 최적화 (필요 시점에만 대기)
+
+## 개발 권장사항
+
+### 1. 유사 사이트 적용 시
+- yongincci 스크래퍼를 기반으로 URL만 변경
+- boardId와 menuId 파라미터만 수정하면 재사용 가능
+- 동일한 Korcham.net 플랫폼 사용 사이트에 적용 가능
+
+### 2. 성능 개선 방향
+- 병렬 처리 도입 고려 (단, 서버 부하 주의)
+- 캐싱 메커니즘 추가 (중복 요청 방지)
+- 더 정교한 에러 복구 로직
+
+### 3. 모니터링 포인트
+- JavaScript 렌더링 실패율
+- 네트워크 연결 오류 빈도
+- 파일 다운로드 성공률
+- 평균 처리 시간 추이
+
+이 스크래퍼는 Korcham.net 플랫폼 기반 상공회의소 사이트들에 대한 표준 템플릿으로 활용할 수 있으며, 안정적인 동적 콘텐츠 처리와 한글 파일명 지원을 제공합니다.

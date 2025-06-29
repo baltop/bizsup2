@@ -1,0 +1,283 @@
+# SEOULSBDC (서울시중소기업지원센터) 스크래퍼 개발 인사이트
+
+## 1. 사이트 분석 결과
+
+### URL 구조
+- 기본 URL: https://www.seoulsbdc.or.kr
+- 목록 페이지 (시도됨): https://www.seoulsbdc.or.kr/bs/BS_LIST.do?boardCd=B061
+- 실제 접근 가능 URL: https://www.seoulsbdc.or.kr/sb/main.do (공지사항)
+
+### 기술적 특징
+- **WebSquare 프레임워크**: 한국 기업용 웹 프레임워크 사용
+- **강력한 안티봇 보안**: 직접 URL 접근 완전 차단
+- **세션 기반 인증**: 메인 페이지 경유 필수
+- **JavaScript 의존성**: 모든 네비게이션이 JavaScript 기반
+- **UTF-8 인코딩**: 한글 처리 지원
+
+### 보안 메커니즘
+- **Referrer 검증**: 메인 페이지에서 온 요청만 허용
+- **세션 토큰**: 동적 세션 토큰 검증
+- **URL 패턴 차단**: 직접 보드 URL 접근 시 "허용되지 않는 요청" 오류
+- **브라우저 핑거프린팅**: User-Agent 및 브라우저 특성 검증
+
+## 2. 구현 기술적 도전과 해결 시도
+
+### 2.1 WebSquare 프레임워크 분석
+**도전**: 일반적인 HTML 기반 사이트와 완전히 다른 구조
+
+**시도한 해결책**:
+```python
+# 1. 직접 HTTP 요청 (실패)
+response = requests.get(board_url, headers=headers)
+# 결과: "허용되지 않는 요청을 하셨습니다" 오류
+
+# 2. 세션 설정 후 접근 (실패)
+session.get(main_url)  # 세션 설정
+session.get(board_url)  # 여전히 차단됨
+
+# 3. Playwright 브라우저 자동화 (부분 성공)
+page.goto(main_url)
+page.evaluate("location.href='/sb/main.do'")  # 일부 성공
+```
+
+### 2.2 안티봇 우회 시도
+**도전**: 다층 보안 시스템으로 모든 자동화 접근 차단
+
+**시도한 방법들**:
+```python
+# 1. 팝업 제거
+page.evaluate("""
+    document.querySelectorAll('.modal, .popup, .overlay').forEach(el => {
+        el.style.display = 'none';
+        el.remove();
+    });
+""")
+
+# 2. 다양한 보드 코드 시도
+board_codes = ['B001', 'B002', 'B003', 'B004', 'B061', 'B062']
+for code in board_codes:
+    url = f'/bs/BS_LIST.do?boardCd={code}'
+    # 모든 코드에서 동일한 차단 메시지
+
+# 3. 강제 클릭 시도
+element.click(force=True)  # 요소 비가시성으로 실패
+```
+
+### 2.3 네비게이션 패턴 분석
+**도전**: 공지사항 링크가 JavaScript 기반이며 비가시성 상태
+
+**발견한 패턴**:
+```html
+<!-- 공지사항 링크 -->
+<a href="#" onclick="goNotice()">공지사항</a>
+<!-- 하지만 goNotice() 함수가 정의되지 않음 -->
+
+<!-- 실제 작동하는 방법 -->
+location.href='/sb/main.do'  // JavaScript 직접 실행
+```
+
+## 3. 기술적 제약 사항
+
+### 3.1 WebSquare 프레임워크 특성
+- **컴포넌트 기반**: 모든 UI가 JavaScript 컴포넌트로 구성
+- **동적 로딩**: 페이지 내용이 AJAX로 동적 로드됨
+- **세션 의존성**: 모든 요청이 복잡한 세션 검증 거침
+- **암호화 통신**: 일부 데이터가 암호화되어 전송됨
+
+### 3.2 안티스크래핑 메커니즘
+```javascript
+// 예상되는 보안 검증 로직
+function validateRequest(request) {
+    if (!checkReferrer(request)) return false;
+    if (!validateSession(request)) return false;
+    if (!checkUserAgent(request)) return false;
+    if (detectAutomation(request)) return false;
+    return true;
+}
+```
+
+### 3.3 접근 제한 사항
+- **IP 기반 제한**: 반복 접근 시 IP 차단 가능성
+- **Rate Limiting**: 요청 빈도 제한
+- **브라우저 검증**: 실제 브라우저 동작 패턴 검증
+- **JavaScript 필수**: 모든 상호작용이 JavaScript 필요
+
+## 4. 성공한 부분적 접근법
+
+### 4.1 메인 페이지 세션 설정
+```python
+# 성공적인 메인 페이지 접근
+page.goto('https://www.seoulsbdc.or.kr/')
+page.wait_for_load_state('networkidle')
+# 결과: 정상 로드, 세션 설정 완료
+```
+
+### 4.2 팝업 제거
+```python
+# JavaScript를 통한 팝업 제거 성공
+page.evaluate("""
+    document.querySelectorAll('.modal, .popup, .overlay').forEach(el => {
+        el.style.display = 'none';
+        el.remove();
+    });
+""")
+```
+
+### 4.3 부분적 네비게이션
+```python
+# /sb/main.do 접근 성공
+page.evaluate("location.href='/sb/main.do'")
+# 결과: /main.do로 리다이렉트되며 일부 콘텐츠 표시
+```
+
+## 5. 실제 데이터 구조 분석
+
+### 5.1 발견된 테이블 구조
+```
+테이블 1:
+- ID: None
+- Class: w2selectbox_table_main
+- 행 개수: 1 (데이터 없음)
+- 내용: 빈 셀들
+```
+
+### 5.2 예상되는 실제 구조 (접근 불가)
+```
+공고 게시판 테이블 (추정):
+- 번호 | 제목 | 등록자 | 등록일 | 조회 | 첨부
+- JavaScript 기반 상세 페이지 모달
+- 파일 다운로드: /cm/downloadFile/{fileId}.do
+```
+
+## 6. 안티스크래핑 우회 전략 (향후 가능성)
+
+### 6.1 완전한 브라우저 에뮬레이션
+```python
+# 더 정교한 브라우저 동작 모방 필요
+- 마우스 움직임 시뮬레이션
+- 키보드 입력 패턴 모방
+- 페이지 스크롤 동작
+- 실제 사용자 지연 시간 모방
+```
+
+### 6.2 세션 분석 및 재현
+```python
+# 정상적인 사용자 세션 패턴 분석
+1. 메인 페이지 방문
+2. 특정 메뉴 클릭 시퀀스
+3. 공지사항 접근 경로 추적
+4. 세션 토큰 패턴 분석
+```
+
+### 6.3 API 엔드포인트 발굴
+```python
+# 숨겨진 API 엔드포인트 탐색
+- WebSquare 내부 AJAX 호출 분석
+- 네트워크 트래픽 모니터링
+- JavaScript 디컴파일 분석
+```
+
+## 7. 대안적 접근 방법
+
+### 7.1 공식 API 사용
+- 서울시중소기업지원센터 공식 API 확인
+- 공공데이터포털 연계 가능성 탐색
+- RSS 피드 존재 여부 확인
+
+### 7.2 정기적 수동 수집
+- 주기적인 수동 데이터 수집
+- 스크린샷 기반 OCR 활용
+- 사람이 직접 접근하여 데이터 추출
+
+### 7.3 협력적 접근
+- 사이트 운영진과의 협의
+- 공식적인 데이터 제공 요청
+- 파트너십 기반 데이터 공유
+
+## 8. 기술적 학습 포인트
+
+### 8.1 WebSquare 프레임워크 특성
+- 한국 기업 환경에서 널리 사용되는 프레임워크
+- 높은 보안성과 복잡한 구조로 스크래핑 난이도 극상
+- 전통적인 HTML 스크래핑 기법으로는 접근 불가
+
+### 8.2 현대적 웹 보안
+- CSP (Content Security Policy) 적용
+- XSS 및 CSRF 방어 메커니즘
+- 봇 탐지 및 차단 시스템
+- 실시간 행동 분석 시스템
+
+### 8.3 스크래핑 탐지 기법
+```javascript
+// 일반적인 봇 탐지 방법들
+- navigator.webdriver 검사
+- window.chrome 객체 존재 여부
+- 마우스 움직임 패턴 분석
+- 페이지 로드 속도 분석
+- JavaScript 실행 패턴 분석
+```
+
+## 9. 최종 구현 결과
+
+### 9.1 개발된 스크래퍼
+- **enhanced_seoulsbdc_scraper.py**: Playwright 기반 구현
+- **test_enhanced_seoulsbdc.py**: 포괄적 테스트 스크립트
+- **여러 디버깅 스크립트**: 단계별 문제 해결 접근
+
+### 9.2 성공한 기능
+- ✅ Playwright 브라우저 초기화
+- ✅ 메인 페이지 세션 설정
+- ✅ 팝업 제거
+- ✅ 부분적 네비게이션 (/sb/main.do)
+
+### 9.3 실패한 기능
+- ❌ 실제 공고 게시판 접근
+- ❌ 공고 목록 파싱
+- ❌ 상세 페이지 접근
+- ❌ 첨부파일 다운로드
+
+## 10. 사이트별 고유 특징
+
+### 10.1 SEOULSBDC만의 특별한 요소
+1. **WebSquare 프레임워크**: 기업용 RIA 프레임워크
+2. **다층 보안 시스템**: Referrer, 세션, 행동 패턴 검증
+3. **JavaScript 완전 의존성**: 모든 기능이 JavaScript 필요
+4. **동적 URL 생성**: 정적 URL 패턴 없음
+
+### 10.2 다른 사이트 대비 난이도
+- **가장 높은 보안 수준**: 접근 자체가 극도로 제한적
+- **복잡한 프레임워크**: 일반적인 스크래핑 기법 무효
+- **완전한 차단 정책**: 자동화 도구에 대한 제로 톨러런스
+
+## 11. 향후 개선 방향
+
+### 11.1 기술적 개선
+- **고급 브라우저 에뮬레이션**: Puppeteer Extra Stealth 등 활용
+- **머신러닝 기반 패턴 분석**: 정상 사용자 행동 학습 및 모방
+- **분산 접근**: 여러 IP와 세션을 통한 접근 시도
+
+### 11.2 정책적 접근
+- **공식 채널 활용**: API 제공 요청, 파트너십 협의
+- **대안 데이터 소스**: 유사한 정보를 제공하는 다른 사이트 활용
+- **수동 수집 체계**: 자동화가 불가능한 경우 수동 프로세스 구축
+
+## 12. 결론 및 교훈
+
+### 12.1 기술적 교훈
+SEOULSBDC 사이트는 현대적인 웹 보안과 안티스크래핑 기술의 집약체로, 
+전통적인 스크래핑 기법으로는 접근이 불가능함을 명확히 보여준다.
+
+### 12.2 실무적 시사점
+- **사이트별 맞춤 전략 필요**: 모든 사이트에 통용되는 만능 해법 없음
+- **보안 수준 사전 평가**: 스크래핑 가능성 사전 검토 필수
+- **대안 방안 준비**: 기술적 접근 실패 시 대안 준비 중요
+
+### 12.3 향후 개발 가이드라인
+WebSquare나 유사한 기업용 프레임워크를 사용하는 사이트의 경우:
+1. **사전 기술 조사 충분히 수행**
+2. **공식적 데이터 접근 방법 우선 모색**
+3. **투입 대비 효과 신중히 평가**
+4. **법적, 윤리적 검토 병행**
+
+이 SEOULSBDC 스크래퍼 개발 경험은 웹 스크래핑 기술의 한계와 
+현대적 웹 보안 시스템의 진화를 이해하는 귀중한 사례가 되었다.

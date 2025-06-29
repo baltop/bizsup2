@@ -1,0 +1,252 @@
+sites:
+  btp:
+    name: "부산테크노파크"
+    scraper_class: "BTPScraper"
+    scraper_module: "btp_scraper"
+    base_url: "https://www.btp.or.kr"
+    list_url: "https://www.btp.or.kr/kor/CMS/Board/Board.do?mCode=MN013"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "page"
+    selectors:
+      table: "table.bdListTbl"
+      rows: "tbody tr"
+      title_link: "a[href]"
+      status: "span.status"
+      writer: "td.writer"
+      date: "td.date"
+      period: "td.period"
+
+  itp:
+    name: "인천테크노파크"
+    scraper_class: "EnhancedITPScraper"
+    scraper_module: "enhanced_itp_scraper"
+    base_url: "https://itp.or.kr"
+    list_url: "https://itp.or.kr/intro.asp?tmid=13"
+    type: "javascript"
+    encoding: "auto"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "PageNum"
+
+  ccei:
+    name: "충북창조경제혁신센터"
+    scraper_class: "CCEIScraper"
+    scraper_module: "ccei_scraper"
+    base_url: "https://ccei.creativekorea.or.kr"
+    list_url: "https://ccei.creativekorea.or.kr/chungbuk/custom/notice_list.do"
+    api_url: "https://ccei.creativekorea.or.kr/chungbuk/custom/noticeList.json"
+    type: "ajax_api"
+    encoding: "utf-8"
+    ssl_verify: true
+    pagination:
+      type: "post_data"
+      param: "pn"
+    api_config:
+      method: "POST"
+      data_fields:
+        boardGubun: ""
+        keyword: ""
+        title: ""
+
+  kidp:
+    name: "한국디자인진흥원"
+    scraper_class: "EnhancedKIDPScraper"
+    scraper_module: "enhanced_kidp_scraper"
+    base_url: "https://kidp.or.kr"
+    list_url: "https://kidp.or.kr/?menuno=1202"
+    type: "javascript"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "page"
+    javascript_config:
+      onclick_patterns:
+        - "submitForm\\(this,'(\\w+)',(\\d+)\\)"
+      detail_url_template: "https://kidp.or.kr/?menuno=1202&bbsno={seq}&siteno=16&act=view&ztag=rO0ABXQAMzxjYWxsIHR5cGU9ImJvYXJkIiBubz0iNjIyIiBza2luPSJraWRwX2JicyI%2BPC9jYWxsPg%3D%3D"
+      file_url_template: "https://kidp.or.kr/?menuno=1202&bbsno={file_id}&siteno=16&act=down&ztag=rO0ABXQAMzxjYWxsIHR5cGU9ImJvYXJkIiBubz0iNjIyIiBza2luPSJraWRwX2JicyI%2BPC9jYWxsPg%3D%3D"
+
+  gsif:
+    name: "강릉과학산업진흥원"
+    scraper_class: "GSIFScraper"
+    scraper_module: "gsif_scraper"
+    base_url: "https://gsif.or.kr"
+    list_url: "https://gsif.or.kr/board/view.php?id=announce"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  djbea:
+    name: "대전일자리경제진흥원"
+    scraper_class: "DJBEAScraper"
+    scraper_module: "djbea_scraper"
+    base_url: "https://www.djbea.or.kr"
+    list_url: "https://www.djbea.or.kr/board/notice"
+    type: "javascript"
+    encoding: "auto"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  mire:
+    name: "환동해산업연구원"
+    scraper_class: "EnhancedMIREScraper"
+    scraper_module: "enhanced_mire_scraper"
+    base_url: "http://mire.re.kr"
+    list_url: "http://mire.re.kr/sub4_4.php"
+    type: "session_based"
+    encoding: "euc-kr"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  dcb:
+    name: "부산디자인진흥원"
+    scraper_class: "DCBScraper"
+    scraper_module: "dcb_scraper"
+    base_url: "https://www.dcb.or.kr"
+    list_url: "https://www.dcb.or.kr/bbs/board.php?bo_table=notice"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  cci:
+    name: "청주상공회의소"
+    scraper_class: "CCIScraper"
+    scraper_module: "cci_scraper"
+    base_url: "http://cci.cjcci.or.kr"
+    list_url: "http://cci.cjcci.or.kr/board/list.asp?table=notice_board"
+    type: "standard_table"
+    encoding: "euc-kr"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  gib:
+    name: "경북바이오산업연구원"
+    scraper_class: "GIBScraper"
+    scraper_module: "gib_scraper"
+    base_url: "http://gib.or.kr"
+    list_url: "http://gib.or.kr/board/list/code/notice"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  gbtp:
+    name: "경북테크노파크"
+    scraper_class: "GBTPScraper"
+    scraper_module: "gbtp_scraper"
+    base_url: "http://www.gtp.or.kr"
+    list_url: "http://www.gtp.or.kr/board/list.gtp?boardId=BRD_0000000023"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "pageIndex"
+
+  gbtp-js:
+    name: "경북테크노파크 (JavaScript)"
+    scraper_class: "GBTPPlaywrightScraper"
+    scraper_module: "gbtp_scraper_playwright"
+    base_url: "http://www.gtp.or.kr"
+    list_url: "http://www.gtp.or.kr/board/list.gtp?boardId=BRD_0000000023"
+    type: "playwright"
+    encoding: "auto"
+    ssl_verify: false
+    pagination:
+      type: "query_param"
+      param: "pageIndex"
+
+  jbf:
+    name: "전북바이오융합산업진흥원"
+    scraper_class: "JBFScraper"
+    scraper_module: "jbf_scraper"
+    base_url: "https://jbf.jbba.kr"
+    list_url: "https://jbf.jbba.kr/board/list.do?menuId=12"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "pageIndex"
+
+  cepa:
+    name: "경남창조경제혁신센터"
+    scraper_class: "CEPAScraper"
+    scraper_module: "cepa_scraper"
+    base_url: "https://cepa.creativekorea.or.kr"
+    list_url: "https://cepa.creativekorea.or.kr/gyeongnam/html/biz/BIZ020100.html"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "page"
+
+  koema:
+    name: "한국에너지공단 조합"
+    scraper_class: "KOEMAScraper"
+    scraper_module: "site_scrapers"
+    base_url: "https://www.koema.or.kr"
+    list_url: "https://www.koema.or.kr/koema/report/total_notice.html"
+    type: "standard_table"
+    encoding: "auto"
+    ssl_verify: true
+    pagination:
+      type: "query_param"
+      param: "page"
+    selectors:
+      table: "table"
+      rows: "tr"
+      title_link: "a[href]"
+      date: "td"
+      writer: "td"
+
+# 기본 설정
+defaults:
+  max_pages: 4
+  output_dir: "output"
+  delay_between_requests: 1
+  delay_between_pages: 2
+  timeout: 30
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  
+# 스크래퍼 타입별 기본 처리 방식
+scraper_types:
+  standard_table:
+    description: "표준 HTML 테이블 기반 게시판"
+    base_class: "StandardTableScraper"
+    
+  ajax_api:
+    description: "AJAX/JSON API 기반"
+    base_class: "AjaxAPIScraper"
+    
+  javascript:
+    description: "JavaScript 실행이 필요한 사이트"
+    base_class: "JavaScriptScraper"
+    
+  session_based:
+    description: "세션 관리가 필요한 사이트"
+    base_class: "SessionBasedScraper"
+    
+  playwright:
+    description: "Playwright 브라우저 자동화 사용"
+    base_class: "PlaywrightScraper"

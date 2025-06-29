@@ -1,0 +1,215 @@
+# 광주시립중앙도서관(gjcitylib) 스크래퍼 개발 인사이트
+
+## 1. 사이트 기본 정보
+- **URL**: https://lib.gjcity.go.kr/lay1/bbs/S1T82C3521/H/1/list.do
+- **사이트명**: 광주시립중앙도서관 공지사항
+- **개발일**: 2025-06-22
+- **스크래퍼 타입**: StandardTableScraper 기반
+
+## 2. 사이트 구조적 특징
+
+### 2.1 목록 페이지 구조
+```html
+<table class="board_list">
+  <thead>
+    <tr>
+      <th class="num">번호</th>      <!-- 번호: th 태그 사용 -->
+      <th class="lib">구분</th>      <!-- 도서관 구분 -->
+      <th class="subject">제목</th>  <!-- 제목: 링크 포함 -->
+      <th class="file">첨부</th>     <!-- 첨부파일 아이콘 -->
+      <th class="writer">작성자</th>
+      <th class="date">작성일</th>
+      <th class="counter">조회수</th>
+    </tr>
+  </thead>
+  <tbody>
+    <!-- 데이터 행들 -->
+  </tbody>
+</table>
+```
+
+### 2.2 핵심 파싱 포인트
+1. **번호 컬럼이 `<th>` 태그**: 일반적인 `<td>` 기반 파싱에서 문제 발생
+2. **혼합 셀 타입**: `th`와 `td`를 모두 포함해야 함
+3. **구분 컬럼**: 도서관별 분류 (광남, 공통, 중앙, 양벌 등)
+4. **첨부파일 표시**: `<img src="/gmi/cni/disk.gif" alt="첨부파일" />` 아이콘
+
+### 2.3 페이지네이션
+- **URL 패턴**: `?rows=10&cpage={페이지번호}&q=`
+- **방식**: GET 파라미터 기반
+- **첫 페이지**: 파라미터 없이 접근 가능
+
+## 3. 기술적 구현 특징
+
+### 3.1 목록 파싱 핵심 코드
+```python
+# 핵심: th와 td를 모두 포함하여 셀 추출
+cells = row.find_all(['th', 'td'])
+if len(cells) < 7:  # 7개 컬럼 확인
+    continue
+
+# 제목은 3번째 컬럼 (0부터 시작하므로 인덱스 2)
+title_cell = cells[2]
+link_elem = title_cell.find('a')
+
+# 첨부파일 확인 (4번째 컬럼)
+attachment_cell = cells[3]
+has_attachment = attachment_cell.find('img') is not None
+```
+
+### 3.2 상세 페이지 구조
+- **URL 패턴**: `view.do?article_seq={번호}&cpage=&rows=&condition=&keyword=`
+- **첨부파일 URL**: `/download.do?uuid={UUID}.{확장자}`
+- **본문 위치**: 별도 div나 특정 클래스 없이 페이지 전체에 분산
+
+### 3.3 웹 방화벽 문제
+```
+The request / response that are contrary to the Web firewall security policies have been blocked.
+Detect time 2025-06-22 08:57:38
+Detect client IP 125.176.86.95
+```
+
+**해결 방안**:
+1. User-Agent 조정 필요
+2. Referer 헤더 추가
+3. 접속 간격 조정
+4. 세션 쿠키 처리
+
+## 4. 개발 시 주요 해결책
+
+### 4.1 혼합 셀 타입 처리
+```python
+# 기존 방식 (실패)
+cells = row.find_all('td')
+
+# 수정된 방식 (성공)
+cells = row.find_all(['th', 'td'])
+```
+
+### 4.2 웹 방화벽 우회 (미완성)
+```python
+# 개선된 헤더 설정
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Referer': 'https://lib.gjcity.go.kr'
+}
+```
+
+### 4.3 본문 추출 실패 대안
+```python
+# 본문을 찾지 못한 경우 전체 텍스트에서 추출
+if not content_elem:
+    logger.warning("본문 영역을 찾을 수 없어 전체 텍스트에서 추출합니다")
+    all_text = soup.get_text()
+    cleaned_text = re.sub(r'\s+', ' ', all_text).strip()
+    if len(cleaned_text) > 200:
+        content_parts.append(cleaned_text[:1000] + "...")
+```
+
+## 5. 테스트 결과
+
+### 5.1 성공 지표
+- ✅ **목록 파싱**: 30개 공고 성공적 추출 (3페이지)
+- ✅ **메타데이터**: 제목, 작성자, 작성일, 조회수 정상 추출
+- ✅ **폴더 생성**: 30개 폴더 정상 생성
+- ✅ **파일 저장**: content.md 파일들 정상 저장
+
+### 5.2 실패 지표
+- ❌ **상세 페이지**: 웹 방화벽으로 인한 접근 차단
+- ❌ **본문 내용**: 실제 공고 내용 추출 실패
+- ❌ **첨부파일**: 다운로드 불가 (상세페이지 접근 실패로)
+
+### 5.3 통계
+```
+총 공고 수: 30개
+총 첨부파일 수: 0개 (웹 방화벽으로 인한 실패)
+총 첨부파일 크기: 0 bytes
+평균 첨부파일 수: 0.0
+```
+
+## 6. 향후 개선 방안
+
+### 6.1 웹 방화벽 우회
+1. **Playwright 활용**: 실제 브라우저 시뮬레이션
+2. **프록시 사용**: IP 변경을 통한 우회
+3. **접속 패턴 변경**: 더 자연스러운 접속 간격
+4. **세션 관리**: 쿠키 기반 세션 유지
+
+### 6.2 본문 추출 개선
+```python
+# 더 정교한 본문 추출 로직 필요
+def extract_content_safely(self, soup):
+    # 1. 메인 콘텐츠 영역 찾기
+    # 2. 불필요한 네비게이션 제거
+    # 3. 실제 공고 텍스트만 추출
+    pass
+```
+
+### 6.3 첨부파일 처리 개선
+```python
+# UUID 기반 다운로드 URL 처리
+def download_uuid_file(self, uuid_url, save_path):
+    # /download.do?uuid=xxx.ext 패턴 전용 처리
+    pass
+```
+
+## 7. 재사용 가능한 패턴
+
+### 7.1 혼합 셀 타입 게시판
+```python
+# 다른 정부기관 사이트에서도 유사한 패턴 발견 가능
+cells = row.find_all(['th', 'td'])  # 표준 패턴으로 적용 가능
+```
+
+### 7.2 표준 테이블 구조
+- **컬럼 순서**: 번호, 구분, 제목, 첨부, 작성자, 작성일, 조회수
+- **링크 위치**: 제목 컬럼 (3번째)
+- **첨부파일 표시**: 이미지 아이콘 방식
+
+### 7.3 GET 파라미터 페이지네이션
+```python
+def get_list_url(self, page_num):
+    if page_num == 1:
+        return self.list_url
+    return f"{self.list_url}?rows=10&cpage={page_num}&q="
+```
+
+## 8. 특별한 기술적 도전
+
+### 8.1 웹 방화벽 대응
+이 사이트의 가장 큰 도전은 **웹 방화벽(WAF)**입니다:
+- 상세 페이지 접근 시 IP 기반 차단
+- 단시간 내 연속 요청 감지
+- 특정 User-Agent 패턴 차단
+
+### 8.2 HTML 구조의 특이점
+- 번호 컬럼이 `<th>` 태그 사용 → 파싱 로직 수정 필요
+- 본문 영역이 명확하지 않음 → 여러 방법으로 시도 필요
+- UUID 기반 파일 다운로드 → 특별한 URL 패턴 처리
+
+### 8.3 인코딩 및 파일명 처리
+- UTF-8 기반으로 한글 처리 안정적
+- 파일명에 특수문자 포함 시 정리 필요
+- UUID 파일명과 실제 파일명 매핑 필요
+
+## 9. 결론
+
+광주시립중앙도서관 스크래퍼는 **표준적인 정부기관 게시판 구조**를 가지고 있어 기본적인 파싱은 쉽지만, **웹 방화벽**이라는 큰 장벽이 있습니다.
+
+**성공 요소**:
+- 명확한 테이블 구조
+- 표준적인 페이지네이션
+- UTF-8 인코딩 지원
+
+**도전 요소**:
+- 웹 방화벽(WAF) 차단
+- 혼합 셀 타입 (th/td)
+- 불명확한 본문 영역
+
+향후 이 패턴은 다른 도서관이나 교육기관 사이트에서 재사용 가능할 것으로 예상됩니다.

@@ -1,0 +1,221 @@
+# GIB (경북바이오산업연구원) 스크래퍼 개발 문서
+
+## 개요
+경북바이오산업연구원(https://gib.re.kr) 공지사항 스크래퍼 구현
+URL: https://gib.re.kr/module/bbs/list.php?mid=/news/notice
+
+## 주요 특이점 및 기술적 이슈
+
+### 1. JavaScript 기반 네비게이션
+**문제**: 일반적인 href 링크가 아닌 JavaScript 함수 호출 방식
+```javascript
+javascript:goView(0, 5653,5653);
+```
+
+**해결책**: goView() 함수 분석을 통한 실제 URL 패턴 도출
+- `goView(cur_row, rdno, rdnoorg)` → `view.php?mid=/news/notice&cur_row={cur_row}&rdno={rdno}&rdnoorg={rdnoorg}`
+- 정규표현식: `r'goView\((\d+),\s*(\d+),\s*(\d+)\)'`
+
+### 2. 첨부파일 다운로드 시스템
+**문제**: 복잡한 2단계 다운로드 프로세스
+- Step 1: `/lib/php/pub/download.php` (POST)
+- Step 2: `/lib/php/pub/download_open.php` (POST)
+
+**JavaScript 패턴**:
+```javascript
+downloadAttFile('md_bbs', '1', '5653', '1')
+// 파라미터: (attf_flag, seno, atnum, atpath)
+```
+
+**핵심 발견**:
+- 첨부파일 링크가 `<span>` 태그에 있음 (일반적인 `<a>` 태그가 아님)
+- `onclick` 속성에서 파라미터 추출 필요
+- 세션 유지 및 적절한 헤더 설정 필수
+
+### 3. HTML 구조 특성
+
+#### 목록 페이지:
+- 표준 `<table>` 구조
+- 30개 행 (헤더 제외)
+- 컬럼: 순번, 상태, 제목, 파일표시, 글쓴이, 날짜, 조회
+
+#### 상세 페이지:
+- 본문: `div.bbs_content` (최적) → `div.content` (대안)
+- 첨부파일: `div.div_attf_view_list` 또는 `div.div_attf_view` 영역
+
+### 4. 인코딩 이슈
+**문제**: 한글 파일명 인코딩 문제
+**해결책**: 다단계 인코딩 처리
+```python
+# Content-Disposition 헤더 처리
+filename.encode('latin-1').decode('utf-8')  # 1차 시도
+filename.encode('latin-1').decode('euc-kr') # 2차 시도
+```
+
+## 구현 세부사항
+
+### 클래스 구조
+```python
+class GIBScraper(BaseScraper):
+    base_url = "https://gib.re.kr"
+    list_url = "https://gib.re.kr/module/bbs/list.php?mid=/news/notice"
+```
+
+### 핵심 메소드
+
+#### 1. `parse_list_page()`:
+- JavaScript onclick 패턴 분석
+- goView 파라미터 추출
+- 실제 detail URL 구성
+
+#### 2. `parse_detail_page()`:
+- 다중 content selector 시도
+- `<span onclick="downloadAttFile(...)">` 패턴 감지
+- 첨부파일 메타데이터 추출
+
+#### 3. `_download_gib_file()`:
+- 2단계 POST 요청 구현
+- 세션 쿠키 유지
+- Content-Disposition 파일명 처리
+
+### 정규표현식 패턴
+```python
+# goView 파라미터 추출
+r'goView\((\d+),\s*(\d+),\s*(\d+)\)'
+
+# downloadAttFile 파라미터 추출  
+r"downloadAttFile\(\s*['\"]([^'\"]*)['\"],\s*['\"]([^'\"]*)['\"],\s*['\"]([^'\"]*)['\"],\s*['\"]([^'\"]*)['\"]"
+```
+
+## 추후 변경시 주의사항
+
+### 1. 사이트 구조 변경 대응
+- **goView 함수명 변경**: JavaScript 함수명이 바뀔 수 있음
+- **URL 패턴 변경**: view.php 경로나 파라미터명 변경 가능
+- **HTML 구조**: table → div 구조로 변경 가능성
+
+### 2. 첨부파일 시스템 변경
+- **downloadAttFile 파라미터**: 파라미터 순서나 개수 변경 가능
+- **다운로드 URL**: `/lib/php/pub/` 경로 변경 가능성
+- **태그 구조**: `<span>` → `<a>` 태그로 변경 가능성
+
+### 3. 보안 정책 변경
+- **세션 관리**: 더 엄격한 세션 검증 도입 가능
+- **CSRF 토큰**: 추가 보안 토큰 요구 가능성
+- **User-Agent 검증**: 특정 브라우저만 허용 가능
+
+### 4. 성능 최적화 고려사항
+- **대용량 파일**: 5MB+ 파일 다운로드 시 타임아웃 설정
+- **동시 접속 제한**: 너무 빠른 요청시 IP 차단 가능성
+- **첨부파일 수**: 한 게시물당 최대 11개 첨부파일 확인됨
+
+## 테스트 결과 (2025-06-10)
+
+### 성공 통계:
+- **처리된 공고**: 30개
+- **다운로드된 첨부파일**: 67개
+- **파일 크기 범위**: 38KB ~ 5.7MB
+- **지원 파일 형식**: PDF, HWP, JPG, PNG, ZIP, HWPX
+
+### 성능 지표:
+- **페이지당 처리 시간**: 약 2-3분 (30개 공고)
+- **파일당 다운로드 시간**: 평균 1-2초
+- **성공률**: 100% (테스트 시점 기준)
+
+## 디버깅 팁
+
+### 1. 첨부파일 감지 실패시:
+```python
+# 디버깅용 코드 추가
+print(f"Found {len(attachment_areas)} attachment areas")
+print(f"Download links found: {len(download_links)}")
+for link in download_links:
+    print(f"Link: {link.get('onclick', '')}")
+```
+
+### 2. 다운로드 실패시:
+- HTTP 응답 코드 확인
+- Content-Disposition 헤더 확인
+- 세션 쿠키 유지 상태 확인
+
+### 3. 인코딩 문제시:
+- `response.encoding` 설정 확인
+- 파일명 인코딩 다중 시도 로직 점검
+
+## 파일 구조
+```
+gib_scraper.py          # 메인 스크래퍼 클래스
+tp_scraper.py           # GIB 옵션 추가됨 (line 63, 91, 313-335)
+base_scraper.py         # GIB 특화 다운로드 처리 추가 (line 193-196)
+```
+
+## 실행 방법
+```bash
+# 1페이지만 테스트
+python tp_scraper.py --site gib --pages 1
+
+# 전체 4페이지 수집
+python tp_scraper.py --site gib --pages 4
+
+# 다른 사이트와 함께 실행
+python tp_scraper.py --site all
+```
+
+## 유지보수 체크리스트
+1. [ ] 월 1회 테스트 실행으로 정상 동작 확인
+2. [ ] JavaScript 함수명 변경 모니터링
+3. [ ] 새로운 파일 형식 추가시 확장자 패턴 업데이트
+4. [ ] 대용량 파일 다운로드 타임아웃 조정
+5. [ ] 한글 파일명 인코딩 이슈 지속 모니터링
+
+---
+작성일: 2025-06-10
+최종 테스트: 성공 (30개 공고, 67개 첨부파일)
+
+
+
+  Summary
+
+  I have successfully created a complete GIB scraper for the 경북바이오산업연구원 (Gyeongbuk Bio-industry Research Institute) website. Here's what was accomplished:
+
+  ✅ Key Features Implemented:
+
+  1. URL Pattern Analysis: Successfully analyzed and implemented the JavaScript goView() function pattern to construct proper detail page URLs
+  2. List Page Parsing: Correctly extracts announcement data from the table-based structure
+  3. Content Extraction: Uses the optimal div.bbs_content selector for clean content extraction
+  4. Advanced Attachment Handling:
+    - Detects downloadAttFile() JavaScript calls in both <a> and <span> tags
+    - Implements GIB's unique 2-step download process
+    - Handles various file types: PDF, HWP, DOC, ZIP, JPG, PNG
+    - Proper Korean filename encoding handling
+  5. Integration: Fully integrated with the main tp_scraper.py system
+
+  ✅ Test Results:
+
+  The scraper successfully processed 30 announcements from page 1, including:
+  - 67 total attachments downloaded across multiple posts
+  - Various file formats: PDF, HWP, JPG, PNG, ZIP files
+  - Proper file sizes: From 38KB to 5.7MB files
+  - Clean content extraction: Markdown content properly formatted
+  - Organized storage: Each announcement in separate folders with attachments subfolder
+
+  ✅ Notable Achievements:
+
+  - Multi-file Posts: Successfully handled posts with up to 11 attachments
+  - Large Files: Successfully downloaded large files like "3. RMS 지원기업 사용자매뉴얼.pdf" (5.7MB)
+  - Korean Filenames: Proper handling of Korean characters in filenames
+  - Content Quality: Clean extraction without navigation/header elements
+
+  The GIB scraper is now production-ready and can be used with:
+  python tp_scraper.py --site gib --pages 4
+
+
+
+
+Total cost:            $4.32
+Total duration (API):  28m 48.0s
+Total duration (wall): 58m 38.0s
+Total code changes:    1385 lines added, 62 lines removed
+Token usage by model:
+    claude-3-5-haiku:  104.1k input, 2.4k output, 0 cache read, 0 cache write
+       claude-sonnet:  313 input, 50.2k output, 4.9m cache read, 536.2k cache write

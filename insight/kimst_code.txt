@@ -1,0 +1,146 @@
+# KIMST Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+- **URL**: https://www.kimst.re.kr/u/news/inform_01/pjtAnuc.do
+- **구조**: 이중 시스템 아키텍처 (KIMST 목록 + IRIS 상세)
+- **인코딩**: UTF-8
+- **페이지네이션**: GET 파라미터 기반 (`?page=N`)
+- **SSL**: 레거시 SSL 호환성 문제 (커스텀 어댑터 필요)
+
+## 기술적 구현 특징
+
+### 1. 이중 시스템 아키텍처
+```python
+# KIMST 목록 페이지 → IRIS 상세 페이지
+list_url = "https://www.kimst.re.kr/u/news/inform_01/pjtAnuc.do"  # 목록
+detail_url = "https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId=012934"  # 상세
+```
+
+### 2. SSL 호환성 문제 해결
+```python
+class SSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        context = create_urllib3_context()
+        context.set_ciphers("DEFAULT:@SECLEVEL=1")
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        kwargs['ssl_context'] = context
+        return super().init_poolmanager(*args, **kwargs)
+```
+
+### 3. JavaScript 기반 파일 다운로드
+```python
+# IRIS 시스템의 JavaScript 함수 패턴
+js_pattern = r"f_bsnsAncm_downloadAtchFile\(['\"]([^'\"]+)['\"],\s*['\"]([^'\"]+)['\"],\s*['\"]([^'\"]+)['\"],\s*['\"]([^'\"]+)['\"]\)"
+
+# Playwright로 JavaScript 실행
+self.page.evaluate(js_code)
+```
+
+### 4. 컨텍스트 전달 최적화
+```python
+def download_file(self, url: str, save_path: str, attachment: dict = None, **kwargs) -> bool:
+    # kwargs로 detail_url 전달받아 Playwright에서 사용
+    detail_url = kwargs.get('detail_url')
+    return self._download_iris_file_with_url(attachment, save_path, detail_url)
+```
+
+## 주요 해결책
+
+### 1. 베이스 클래스 메소드 오버라이드
+Enhanced 스크래퍼에서 베이스 클래스의 `process_announcement`와 `_download_attachments` 메소드를 오버라이드하여 KIMST 특화 처리:
+
+```python
+def process_announcement(self, announcement: Dict[str, Any], index: int, output_base: str = 'output'):
+    """KIMST 특화 버전 - detail_url을 첨부파일 다운로드에 전달"""
+    detail_url = announcement.get('url', '')
+    # ... 상세 페이지 처리
+    self._download_attachments(detail['attachments'], folder_path, detail_url)
+```
+
+### 2. 다단계 파일 다운로드 처리
+1. JavaScript URL 감지
+2. Playwright 초기화
+3. IRIS 페이지 접속
+4. JavaScript 함수 실행
+5. 다운로드 이벤트 처리
+
+### 3. 인코딩 및 파일명 처리
+- 한글 파일명 완벽 지원
+- 특수문자 포함 파일명 안전 처리
+- 대용량 파일 스트리밍 다운로드
+
+## 테스트 결과
+
+### 1페이지 테스트 (2025-06-20)
+- **공고 수**: 10개
+- **첨부파일**: 30개 (모든 파일 다운로드 성공)
+- **총 용량**: 378.84MB
+- **성공률**: 100%
+- **한글 파일명**: 30개 (100%)
+
+### 주요 성과
+1. **이중 시스템 연동**: KIMST ↔ IRIS 완벽 연동
+2. **JavaScript 파일 다운로드**: Playwright를 통한 안정적 처리
+3. **대용량 파일 처리**: 37MB+ 파일도 안정적 다운로드
+4. **한글 파일명**: 완벽한 UTF-8 인코딩 지원
+5. **SSL 호환성**: 레거시 시스템과의 호환성 확보
+
+## 재사용 가능한 패턴
+
+### 1. 이중 시스템 패턴
+다른 기관에서도 목록 사이트와 상세 사이트가 분리된 경우 적용 가능:
+- 목록 사이트에서 링크 추출
+- 상세 사이트에서 컨텐츠 및 첨부파일 처리
+
+### 2. JavaScript 다운로드 패턴
+정부기관, 공공기관의 보안 강화된 파일 다운로드 시스템에 적용:
+- onclick 이벤트에서 함수 파라미터 추출
+- Playwright를 통한 JavaScript 실행
+- 다운로드 이벤트 처리
+
+### 3. SSL 호환성 패턴
+레거시 SSL 설정을 사용하는 정부기관 사이트에 적용:
+- 커스텀 SSL 어댑터
+- 인증서 검증 우회
+- 암호화 수준 조정
+
+## 특별한 기술적 도전과 해결책
+
+### 도전 1: 이중 도메인 세션 관리
+**문제**: KIMST와 IRIS 간 다른 도메인으로 인한 세션 분리
+**해결**: 각 도메인별 독립적 세션 관리
+
+### 도전 2: JavaScript 컨텍스트 유지
+**문제**: 베이스 스크래퍼에서 detail_url 컨텍스트가 전달되지 않음
+**해결**: kwargs를 통한 컨텍스트 전달 및 메소드 오버라이드
+
+### 도전 3: 대용량 파일 안정성
+**문제**: 37MB+ 파일 다운로드 시 timeout 발생
+**해결**: Playwright timeout 증가 및 스트리밍 다운로드
+
+### 도전 4: 레거시 SSL 호환성
+**문제**: 최신 SSL 라이브러리와 구형 서버 간 호환성 문제
+**해결**: 커스텀 SSL 어댑터로 암호화 수준 조정
+
+## 성능 최적화
+
+### 1. 네트워크 최적화
+- 세션 재사용으로 연결 오버헤드 감소
+- 적절한 timeout 설정 (30초)
+- 요청 간격 조절 (1초)
+
+### 2. 메모리 최적화
+- 스트리밍 다운로드로 메모리 효율성
+- Playwright 인스턴스 적절한 정리
+- 대용량 파일 청크 단위 처리
+
+## Enhanced 스크래퍼 장점 확인
+
+1. **개발 효율성**: 기존 코드 90% 재사용
+2. **안정성**: 중복 검사 및 조기 종료 지원
+3. **디버깅**: 구조화된 로깅으로 문제 진단 용이
+4. **호환성**: 기존 베이스 스크래퍼와 완벽 호환
+5. **확장성**: 다른 정부기관 사이트에 패턴 재적용 가능
+
+KIMST 스크래퍼는 Enhanced 아키텍처의 고급 기능을 모두 활용한 성공적인 구현 사례로, 특히 이중 시스템과 JavaScript 기반 파일 다운로드 처리에서 혁신적인 해결책을 제시했습니다.

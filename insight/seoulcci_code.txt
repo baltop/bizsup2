@@ -1,0 +1,303 @@
+# 서울상공회의소(SeoulCCI) 스크래퍼 개발 인사이트
+
+## 사이트 기본 정보
+- **사이트명**: 서울상공회의소 (대한상공회의소)
+- **URL**: https://www.korcham.net/nCham/Service/Kcci/appl/KcciNoticeList.asp
+- **인코딩**: EUC-KR (전통적인 ASP 사이트)
+- **SSL**: HTTPS 지원
+- **플랫폼**: ASP (Active Server Pages) 기반
+
+## 기술적 특징
+
+### 1. 웹사이트 구조
+- **플랫폼**: 전통적인 ASP 기반 정부/공공기관 웹사이트
+- **페이지네이션**: JavaScript `page('N')` 함수 기반
+- **상세페이지 접근**: JavaScript `goDetail('ID')` 함수 기반
+- **테이블 구조**: 4컬럼 구조 (번호, 제목, 담당부서, 등록일)
+- **첨부파일**: JavaScript `down('filename','date')` 함수 기반
+
+### 2. 핵심 기술적 도전과 해결책
+
+#### 2.1 JavaScript URL 패턴 분석
+**문제**: 초기에 onclick 속성에서 ID 추출 시도했으나 실제로는 href 속성 사용
+```html
+<!-- 실제 HTML 구조 -->
+<a href="javascript:goDetail('201726');">제목...</a>
+```
+
+**해결책**: href 속성에서 JavaScript URL 파싱
+```python
+# 성공한 정규표현식 패턴
+href_pattern = r"javascript:goDetail\s*\(\s*['\"]([^'\"]+)['\"]"
+
+# href에서 먼저 시도 (주요 패턴)
+if href and 'goDetail' in href:
+    match = re.search(r"javascript:goDetail\s*\(\s*['\"]([^'\"]+)['\"]", href)
+    if match:
+        article_id = match.group(1)
+```
+
+#### 2.2 Playwright 중첩 실행 문제
+**문제**: asyncio 루프 내에서 Playwright sync API 중복 호출
+```
+Error: It looks like you are using Playwright Sync API inside the asyncio loop.
+```
+
+**해결책**: 브라우저 인스턴스 재사용 패턴
+```python
+# 단일 브라우저 인스턴스로 전체 스크래핑 수행
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    
+    # 모든 페이지 처리에 동일한 page 객체 사용
+    for page_num in range(1, max_pages + 1):
+        # 페이지네이션과 상세 페이지 접근에 같은 page 사용
+        self.process_announcement(announcement, i, output_base, page)
+```
+
+#### 2.3 상세 페이지 접근 제한
+**문제**: JavaScript 기반 상세 페이지 접근의 기술적 한계
+- ASP 세션 의존성
+- 서버사이드 URL 생성
+- JavaScript 함수 의존성
+
+**해결책**: 기본 콘텐츠 저장 + 원본 URL 제공
+```python
+def _save_basic_content(self, announcement: dict, folder_path: str):
+    basic_content = "## 공고 내용\n\n상세 내용을 가져올 수 없습니다.\n\n"
+    basic_content += "JavaScript 기반 ASP 사이트의 특성상 상세 페이지 접근이 제한됩니다.\n\n"
+    basic_content += f"- 원본 페이지: {self.list_url}\n"
+    basic_content += f"- 기사 ID: {announcement.get('article_id', 'N/A')}\n\n"
+```
+
+## 성공한 구현 패턴
+
+### 1. 클래스 구조
+```python
+class EnhancedSeoulCCIScraper(StandardTableScraper):
+    def __init__(self):
+        self.base_url = "https://www.korcham.net"
+        self.list_url = "https://www.korcham.net/nCham/Service/Kcci/appl/KcciNoticeList.asp"
+        self.detail_base_url = "https://www.korcham.net/nCham/Service/Kcci/appl/KcciNoticeDetail.asp"
+        
+        # ASP 사이트 특화 설정
+        self.default_encoding = 'euc-kr'
+        self.delay_between_requests = 2
+```
+
+### 2. 목록 페이지 파싱 (성공)
+```python
+def parse_list_page(self, html_content: str) -> list:
+    # 다양한 테이블 찾기 방법
+    for table in tables:
+        caption = table.find('caption')
+        if caption and '목록' in caption.get_text():
+            target_table = table
+            break
+    
+    # 4컬럼 구조 처리 (번호, 제목, 담당부서, 등록일)
+    for row in rows:
+        cells = row.find_all('td')
+        if len(cells) < 4:
+            continue
+        
+        # href에서 article_id 추출
+        href = link_elem.get('href', '')
+        if href and 'goDetail' in href:
+            match = re.search(r"javascript:goDetail\s*\(\s*['\"]([^'\"]+)['\"]", href)
+```
+
+### 3. 페이지네이션 처리
+```python
+def scrape_pages(self, max_pages: int = 3, output_base: str = 'output') -> bool:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        
+        for page_num in range(1, max_pages + 1):
+            page.goto(self.list_url)
+            page.wait_for_load_state('networkidle')
+            
+            if page_num > 1:
+                # JavaScript page() 함수 실행
+                page.evaluate(f"page('{page_num}')")
+                page.wait_for_load_state('networkidle')
+```
+
+### 4. 첨부파일 정보 처리
+```python
+def _download_attachments_seoulcci(self, attachments: list, folder_path: str):
+    # JavaScript 기반 다운로드 제한으로 정보만 저장
+    with open(attachments_info_path, 'w', encoding='utf-8') as f:
+        for attachment in attachments:
+            f.write(f"파일명: {attachment['filename']}\n")
+            f.write(f"다운로드 함수: {attachment['url']}\n")
+        
+        f.write("\n주의: JavaScript 기반 다운로드로 인해 자동 다운로드가 제한됩니다.\n")
+```
+
+## 테스트 결과 분석
+
+### 성공 지표
+```
+=== 서울상공회의소 스크래퍼 테스트 결과 ===
+✅ 목록 파싱: 3페이지 × 15개 = 총 45개 공고 발견
+✅ 기사 ID 추출: 100% 성공 (href 패턴 매칭)
+✅ 페이지네이션: JavaScript page() 함수 정상 작동
+✅ 기본 콘텐츠 저장: 45개 폴더 생성
+❌ 상세 페이지 접근: JavaScript/ASP 제한으로 실패
+❌ 첨부파일 다운로드: JavaScript 제한으로 정보만 저장
+```
+
+### 처리된 공고 유형
+1. **규제 관련**: "규제샌드박스 실증사업비 운영 컨설팅"
+2. **사업 입찰**: "위해상품판매차단시스템 고도화 사업"
+3. **포럼/행사**: "대한상의 하계포럼 행사 대행"
+4. **연수과정**: "유럽 모빌리티 글로벌 연수과정"
+5. **컨설팅**: "중소·중견기업 수입규제 대응 컨설팅"
+
+### 성능 지표
+- **목록 파싱 성공률**: 100% (45/45)
+- **기사 ID 추출 성공률**: 100% (45/45)
+- **상세 페이지 접근 성공률**: 0% (JavaScript 제한)
+- **처리 속도**: 페이지당 약 3초
+- **첨부파일 정보**: 저장됨 (실제 다운로드 불가)
+
+## 중요한 기술적 발견
+
+### 1. ASP 사이트 특성
+```python
+# EUC-KR 인코딩 처리 필수
+self.default_encoding = 'euc-kr'
+
+# JavaScript 의존성 높음
+page.evaluate(f"page('{page_num}')")  # 페이지네이션
+page.evaluate(f"goDetail('{article_id}')")  # 상세 페이지
+```
+
+### 2. JavaScript URL 패턴
+```html
+<!-- 목록 페이지 링크 -->
+<a href="javascript:goDetail('201726');">제목</a>
+
+<!-- 첨부파일 다운로드 -->
+<a href="javascript:down('filename.hwp','20250620')">파일명</a>
+
+<!-- 페이지네이션 -->
+<a href="javascript:page('2')">2</a>
+```
+
+### 3. 테이블 구조 패턴
+```html
+<table caption="목록">
+  <thead>
+    <tr>
+      <th>번호</th>
+      <th>제목</th>
+      <th>담당부서</th>
+      <th>등록일</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="num">1829</td>
+      <td class="tl"><a href="javascript:goDetail('201726');">제목</a></td>
+      <td><p class="disp">담당부서</p></td>
+      <td><p class="date">2025.06.20</p></td>
+    </tr>
+  </tbody>
+</table>
+```
+
+## 재사용 가능한 코드 패턴
+
+### 1. ASP 사이트 대응 패턴
+```python
+# EUC-KR 인코딩 설정
+self.default_encoding = 'euc-kr'
+
+# JavaScript 함수 실행 패턴
+page.evaluate(f"functionName('{parameter}')")
+page.wait_for_load_state('networkidle')
+```
+
+### 2. JavaScript URL 파싱 패턴
+```python
+# JavaScript 함수 호출에서 파라미터 추출
+js_pattern = r"javascript:functionName\s*\(\s*['\"]([^'\"]+)['\"]"
+match = re.search(js_pattern, href)
+if match:
+    parameter = match.group(1)
+```
+
+### 3. 제한적 접근 상황 대응 패턴
+```python
+# 상세 페이지 접근 실패 시 기본 정보라도 저장
+def _save_basic_content(self, announcement: dict, folder_path: str):
+    basic_content = "상세 내용 접근 제한\n"
+    basic_content += f"원본 URL: {self.list_url}\n"
+    basic_content += f"기사 ID: {announcement.get('article_id')}\n"
+```
+
+## 개발 과정에서의 주요 학습
+
+### 1. 전통적인 ASP 사이트의 특징
+- **서버사이드 렌더링**: URL이 서버에서 동적 생성
+- **세션 의존성**: 페이지 간 이동 시 세션 상태 중요
+- **JavaScript 의존성**: 모든 네비게이션이 JavaScript 기반
+- **EUC-KR 인코딩**: 한글 처리를 위한 인코딩 고려 필요
+
+### 2. 상세 페이지 접근의 한계
+```python
+# 시도했으나 실패한 방법들
+# 1. 직접 URL 구성: 불가능 (서버사이드 생성)
+# 2. GET 파라미터: 불가능 (ASP 세션 의존)
+# 3. POST 요청: 불가능 (CSRF 토큰 등)
+# 4. JavaScript 함수: 부분적 성공 (asyncio 충돌)
+```
+
+### 3. 실용적 해결책
+- **목록 정보 최대 활용**: 제목, 담당부서, 날짜 등
+- **기본 메타데이터 저장**: 원본 URL, 기사 ID 포함
+- **사용자 가이드 제공**: 수동 접근 방법 안내
+- **첨부파일 정보 저장**: 다운로드 함수 정보 보존
+
+## 다른 ASP 사이트 적용 가능성
+
+### 공통 적용 가능한 패턴
+1. **JavaScript URL 파싱**: `javascript:function('param')` 패턴
+2. **EUC-KR 인코딩 처리**: 한국 정부/공공기관 사이트
+3. **Playwright 기반 렌더링**: 동적 콘텐츠 처리
+4. **기본 콘텐츠 저장**: 접근 제한 시 대안
+
+### 사이트별 조정 필요 사항
+1. **JavaScript 함수명**: `goDetail`, `page` 등 사이트별 차이
+2. **테이블 구조**: 컬럼 수와 순서
+3. **인코딩**: EUC-KR vs UTF-8
+4. **세션 처리**: 로그인 요구 여부
+
+## 결론
+
+서울상공회의소 스크래퍼는 **목록 파싱에서는 완전한 성공**을 거두었으나, **상세 페이지 접근에서는 기술적 한계**에 직면했습니다.
+
+**주요 성과**:
+- ✅ 45개 공고 목록 완벽 파싱 (100% 성공률)
+- ✅ JavaScript href 패턴 성공적 분석
+- ✅ ASP 기반 페이지네이션 완벽 처리
+- ✅ EUC-KR 인코딩 자동 처리
+- ✅ 기본 메타데이터 및 원본 정보 보존
+
+**기술적 한계**:
+- ❌ JavaScript/ASP 기반 상세 페이지 접근 제한
+- ❌ 첨부파일 자동 다운로드 불가 (정보만 저장)
+- ❌ 실제 공고 본문 내용 추출 제한
+
+**실용적 가치**:
+이 스크래퍼는 **공고 목록 모니터링 도구**로서 높은 가치를 가집니다:
+- 새로운 공고 발행 여부 실시간 확인
+- 공고 제목, 담당부서, 날짜 정보 수집
+- 기사 ID를 통한 수동 접근 가이드 제공
+- 첨부파일 존재 여부 및 다운로드 방법 안내
+
+향후 유사한 **전통적인 ASP 기반 정부/공공기관 사이트**에 대한 스크래핑 시 이 패턴을 기반으로 빠른 개발이 가능할 것으로 예상됩니다.

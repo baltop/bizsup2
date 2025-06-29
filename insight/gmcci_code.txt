@@ -1,0 +1,250 @@
+# 광명상공회의소(GMCCI) 스크래퍼 개발 인사이트
+
+## 사이트 기본 정보
+- **사이트명**: 광명상공회의소
+- **URL**: https://gmcci.korcham.net/front/board/boardContentsListPage.do?boardId=10599&menuId=2022
+- **인코딩**: UTF-8
+- **SSL**: HTTPS 지원
+
+## 기술적 특징
+
+### 1. 웹사이트 구조
+- **플랫폼**: 대한상공회의소 표준 시스템 (korcham.net)
+- **페이지네이션**: JavaScript 기반 go_Page() 함수
+- **상세페이지 접근**: JavaScript contentsView() 함수
+- **테이블 구조**: 2컬럼 구조 (번호, 제목) - 날짜 컬럼 없음
+
+### 2. 핵심 기술적 도전과 해결책
+
+#### 2.1 테이블 구조 파악 문제
+**문제**: 초기 구현에서 3컬럼 기준으로 파싱했으나 실제로는 2컬럼 구조
+```python
+# 수정 전 (실패)
+if len(cells) < 3:  # 번호, 제목, 날짜 기대
+    continue
+
+# 수정 후 (성공)
+if len(cells) < 2:  # 번호와 제목만 필요
+    continue
+```
+
+#### 2.2 contentsView ID 추출 문제
+**해결책**: href 속성 우선, onclick 속성 후순위로 처리
+```python
+# href에서 먼저 시도
+if href and 'contentsView' in href:
+    match = re.search(r"contentsView\('([^']+)'\)", href)
+    if match:
+        content_id = match.group(1)
+
+# onclick에서 시도 (fallback)
+if not content_id and onclick:
+    match = re.search(r"contentsView\('([^']+)'\)", onclick)
+    if match:
+        content_id = match.group(1)
+```
+
+#### 2.3 JavaScript 의존성
+- 목록 페이지가 JavaScript로 동적 생성
+- BeautifulSoup만으로는 빈 페이지 반환
+- Playwright 필수 사용
+
+## 성공한 구현 패턴
+
+### 1. 클래스 구조
+```python
+class EnhancedGMCCIScraper(StandardTableScraper):
+    def __init__(self):
+        self.base_url = "https://gmcci.korcham.net"
+        self.list_url = "https://gmcci.korcham.net/front/board/boardContentsListPage.do?boardId=10599&menuId=2022"
+        self.detail_base_url = "https://gmcci.korcham.net/front/board/boardContentsView.do"
+        
+        # 성능 최적화 설정
+        self.delay_between_requests = 2
+        self.timeout = 30
+```
+
+### 2. 페이지네이션 처리
+```python
+def get_list_url(self, page_num: int) -> str:
+    if page_num == 1:
+        return self.list_url
+    else:
+        return f"{self.list_url}&page={page_num}"
+```
+
+### 3. Playwright 기반 파싱
+```python
+def _parse_with_playwright(self):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(self.list_url)
+        page.wait_for_load_state('networkidle')
+        
+        # 'tbody tr' 선택자로 15개 행 성공적으로 발견
+        rows = page.locator('tbody tr').all()
+```
+
+### 4. 상세 페이지 접근
+```python
+def get_detail_page_with_playwright(self, content_id: str) -> str:
+    # JavaScript 함수 실행으로 상세페이지 접근
+    page.evaluate(f"contentsView('{content_id}')")
+    page.wait_for_url("**/boardContentsView.do**", timeout=10000)
+    
+    # 폴백: 직접 URL 접근
+    direct_url = f"{self.detail_base_url}?contentsId={content_id}&boardId=10599&menuId=2022"
+    page.goto(direct_url)
+```
+
+## 테스트 결과 분석
+
+### 성공 지표
+```
+=== 광명상공회의소 스크래퍼 테스트 결과 ===
+✅ 총 공고 수: 15개
+✅ 본문 추출 성공률: 100.0% (15/15)
+✅ 첨부파일 수: 3개
+✅ 총 다운로드 크기: 3,922 bytes
+```
+
+### 처리된 공고 유형
+1. **일반 공지사항**: "우리지역 파트너십데이 안내"
+2. **안전 관련**: "사망사고 예방을 위한 기본 안전수칙"
+3. **사업 공고**: "2025 K Brand Week 참가기업 모집"
+4. **교육 프로그램**: "ESG실무교육 및 기업별 맞춤형 컨설팅"
+5. **자금 지원**: "2025년 광명시 중소기업 육성자금"
+6. **채용 공고**: "광명상공회의소 채용공고"
+
+### 성능 지표
+- **처리 속도**: 페이지당 약 4초 (Playwright 렌더링 포함)
+- **메모리 사용**: 표준 범위
+- **파싱 성공률**: 100% (15/15)
+- **첨부파일 다운로드**: 성공 (3개 파일)
+
+## 중요한 기술적 발견
+
+### 1. CCI 사이트 공통 패턴
+```python
+# 표준 CCI 사이트 URL 구조
+base_url = "https://[지역]cci.korcham.net"
+list_url = f"{base_url}/front/board/boardContentsListPage.do?boardId=[ID]&menuId=[ID]"
+detail_url = f"{base_url}/front/board/boardContentsView.do"
+```
+
+### 2. 컨텐츠 ID 추출 패턴
+```python
+# 성공한 정규표현식 패턴
+pattern = r"contentsView\('([^']+)'\)"  # [^']+ 사용으로 유연성 확보
+# 기존의 \d+보다 더 넓은 범위의 ID 형식 지원
+```
+
+### 3. 날짜 처리 유연성
+```python
+# 조건부 날짜 처리로 다양한 테이블 구조 지원
+date = cells[2].inner_text().strip() if len(cells) > 2 else ""
+```
+
+## 재사용 가능한 코드 패턴
+
+### 1. 표준 Playwright 초기화
+```python
+def _parse_with_playwright(self):
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(self.list_url)
+            page.wait_for_load_state('networkidle')
+```
+
+### 2. 다단계 선택자 전략
+```python
+# 여러 방법으로 행 찾기
+selectors = ['tbody tr', 'table tr', 'tr']
+for selector in selectors:
+    temp_rows = page.locator(selector).all()
+    if temp_rows:
+        rows = temp_rows
+        logger.info(f"'{selector}' 선택자로 {len(rows)}개 행 발견")
+        break
+```
+
+### 3. 견고한 에러 처리
+```python
+try:
+    # JavaScript 함수 실행
+    page.evaluate(f"contentsView('{content_id}')")
+    page.wait_for_url("**/boardContentsView.do**", timeout=10000)
+except Exception as e:
+    logger.warning(f"JavaScript 실행 실패: {e}")
+    # 직접 URL 접근으로 폴백
+    direct_url = f"{self.detail_base_url}?contentsId={content_id}&boardId=10599&menuId=2022"
+    page.goto(direct_url)
+```
+
+## 개발 과정에서의 주요 학습
+
+### 1. 디버깅 접근법
+- **단계별 검증**: 행 발견 → 셀 개수 확인 → 컨텐츠 ID 추출
+- **로깅 활용**: 각 단계별 상세한 로그로 문제점 파악
+- **유연한 파싱**: 고정된 구조 가정 대신 조건부 처리
+
+### 2. 성능 최적화
+```python
+# 요청 간 적절한 대기시간
+self.delay_between_requests = 2
+
+# 타임아웃 설정
+self.timeout = 30
+
+# 중복 처리 방지
+self.add_processed_title(announcement['title'])
+```
+
+### 3. 첨부파일 처리
+```python
+def parse_detail_page(self, html_content: str) -> dict:
+    # 첨부파일 행 찾기
+    if th and '첨부파일' in th.get_text():
+        file_links = td.find_all('a')
+        for link in file_links:
+            filename = link.get_text(strip=True)
+            href = link.get('href', '')
+            if href and filename:
+                file_url = urljoin(self.base_url, href)
+```
+
+## 다른 CCI 사이트 적용 가능성
+
+### 공통 적용 가능한 패턴
+1. **URL 구조**: korcham.net 도메인의 표준 구조
+2. **JavaScript 함수**: contentsView(), go_Page() 공통 사용
+3. **테이블 파싱**: 2~3컬럼 유연 처리 로직
+4. **Playwright 필수**: 모든 CCI 사이트에서 JavaScript 렌더링 필요
+
+### 사이트별 조정 필요 사항
+1. **boardId, menuId**: 사이트별 고유값
+2. **테이블 구조**: 2컬럼 vs 3컬럼 확인 필요
+3. **컨텐츠 ID 형식**: 숫자 vs 문자열 혼합
+
+## 결론
+
+광명상공회의소 스크래퍼는 초기 파싱 실패를 겪었으나, 테이블 구조 재분석을 통해 **100% 성공률**을 달성했습니다.
+
+**주요 성과**:
+- ✅ 15개 공고 완벽 파싱 (100% 성공률)
+- ✅ Playwright 기반 안정적 JavaScript 렌더링
+- ✅ 유연한 테이블 구조 처리 (2컬럼 지원)
+- ✅ 견고한 에러 처리 및 폴백 메커니즘
+- ✅ 첨부파일 다운로드 지원
+
+**기술적 혁신**:
+- 2컬럼/3컬럼 테이블 구조 유연 처리
+- href/onclick 다중 소스 컨텐츠 ID 추출
+- 단계별 선택자 전략으로 높은 호환성
+
+이 구현은 다른 CCI 사이트 스크래퍼 개발의 **표준 템플릿**으로 활용 가능하며, 특히 테이블 구조 분석과 JavaScript 기반 상세페이지 접근 패턴은 재사용성이 높습니다.

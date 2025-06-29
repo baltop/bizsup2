@@ -1,0 +1,224 @@
+# JICA (전주정보문화산업진흥원) 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+
+### 기본 정보
+- **사이트명**: 전주정보문화산업진흥원 (JICA)
+- **URL**: https://www.jica.or.kr/2025/inner.php?sMenu=A1000
+- **타입**: 전형적인 PHP 기반 게시판
+- **인코딩**: UTF-8
+- **SSL**: 지원됨
+
+### 페이지 구조
+- **목록 페이지**: 표준 HTML 테이블 구조 (.ta_bo 클래스)
+- **페이지네이션**: GET 파라미터 방식 (pno=페이지번호)
+- **상세 페이지**: 표준 게시판 형태
+- **첨부파일**: filedown2.php 스크립트 사용
+
+## 기술적 구현 특징
+
+### 1. 테이블 파싱
+```python
+# JICA 테이블 구조 - .ta_bo 클래스 사용
+table = soup.find('table', class_='ta_bo')
+tbody = table.find('tbody')
+
+# 7개 컬럼: 번호, 현황, 제목, 접수일, 마감일, D-Day, 조회수
+for row in tbody.find_all('tr'):
+    cells = row.find_all(['td', 'th'])
+    if len(cells) >= 3:
+        # 제목은 3번째 셀 (인덱스 2)
+        title_cell = cells[2]
+        link_elem = title_cell.find('a')
+```
+
+### 2. URL 패턴
+```python
+# 페이지네이션
+base_url = "https://www.jica.or.kr/2025/inner.php?sMenu=A1000"
+page_url = f"{base_url}&pno={page_num}"  # pno 파라미터 사용
+
+# 상세 페이지
+detail_url = "inner.php?sMenu=A1000&mode=view&no=767"
+full_url = urljoin(self.base_url + "/2025/", href)
+```
+
+### 3. 첨부파일 다운로드
+```python
+# JICA 특화 파일 다운로드 처리
+# filedown2.php 스크립트 사용
+file_url = "filedown2.php?fn1=파일ID&fn2=URL인코딩된파일명&type=files&sMenu=A1000&no=767&order=0"
+
+# URL 파라미터에서 파일명 추출
+if 'fn2' in query_params:
+    filename = unquote(query_params['fn2'][0])
+elif 'fn1' in query_params:
+    filename = query_params['fn1'][0]
+```
+
+## 주요 해결책
+
+### 1. 다단계 파일명 인코딩 처리
+```python
+def _extract_filename_from_response(self, response, save_dir):
+    # 1. RFC 5987 형식 처리
+    rfc5987_match = re.search(r"filename\*=([^']*)'([^']*)'(.+)", content_disposition)
+    
+    # 2. 일반 filename 파라미터 처리  
+    # 3. 다양한 인코딩 시도 (UTF-8, EUC-KR, CP949)
+    # 4. URL 파라미터에서 추출 (fn2, fn1)
+```
+
+### 2. 공지글 이미지 제거
+```python
+# 공지글 이미지가 있는 경우 텍스트만 추출
+if 'important.gif' in str(title_cell):
+    for img in title_cell.find_all('img'):
+        img.decompose()
+    title = link_elem.get_text(strip=True)
+```
+
+### 3. Enhanced 베이스 클래스 활용
+```python
+class EnhancedJicaScraper(StandardTableScraper):
+    # 자동 중복 검사
+    # 한글 파일명 처리
+    # 구조화된 로깅
+    # 설정 주입 지원
+```
+
+## 테스트 결과
+
+### 성능 지표
+- **처리 공고 수**: 27개 (3페이지)
+- **성공률**: 100%
+- **첨부파일 수**: 49개
+- **한글 파일명**: 대부분 정상 처리
+- **평균 처리 시간**: 약 1초/공고
+
+### 파일 타입 분포
+- **.hwp**: 25개 (52%)
+- **.pdf**: 20개 (41%) 
+- **.xlsx**: 2개 (4%)
+- **.docx**: 1개 (2%)
+- **.zip**: 1개 (2%)
+
+### 첨부파일 검증 결과
+```
+총 공고 수: 27
+성공적 처리: 27 (100.0%)
+원본 URL 포함: 27
+총 첨부파일: 49
+한글 파일명: 47 (96%)
+총 파일 용량: 13,478,336 bytes (약 13MB)
+```
+
+## 재사용 가능한 패턴
+
+### 1. 표준 PHP 게시판 패턴
+- 대부분의 정부기관/공공기관 사이트에 적용 가능
+- GET 파라미터 페이지네이션
+- 표준 HTML 테이블 구조
+- filedown.php 계열 다운로드 스크립트
+
+### 2. URL 파라미터 파일명 추출
+```python
+# URL에서 파일명 추출하는 범용 패턴
+def extract_filename_from_url_params(self, url, param_names=['fn2', 'fn1', 'filename']):
+    parsed_url = urlparse(url)
+    query_params = parse_qs(parsed_url.query)
+    
+    for param in param_names:
+        if param in query_params:
+            filename = unquote(query_params[param][0])
+            return self.sanitize_filename(filename)
+    return None
+```
+
+### 3. 테이블 메타정보 추출
+```python
+# 상태, 날짜, 조회수 등 추가 정보 추출
+try:
+    announcement['status'] = cells[1].find('span').get_text(strip=True)
+    announcement['start_date'] = cells[3].get_text(strip=True)
+    announcement['end_date'] = cells[4].get_text(strip=True)
+    announcement['views'] = cells[6].get_text(strip=True)
+except Exception as e:
+    logger.debug(f"추가 정보 추출 중 오류 (무시): {e}")
+```
+
+## 특별한 기술적 도전과 해결책
+
+### 1. 파일명 인코딩 이슈
+**도전**: URL 파라미터의 한글 파일명이 다중 인코딩되어 있음
+**해결**: 
+- fn2 파라미터에서 URL 디코딩 후 UTF-8 처리
+- Content-Disposition 헤더 대신 URL 파라미터 우선 사용
+- 다단계 인코딩 복구 시도
+
+### 2. 상대 URL 처리
+**도전**: 상세 페이지 링크가 상대 경로
+**해결**:
+```python
+# 2025 서브디렉토리를 고려한 URL 조합
+detail_url = urljoin(self.base_url + "/2025/", href)
+```
+
+### 3. 첨부파일 섹션 파싱
+**도전**: 첨부파일이 특정 div#file 안에 있음
+**해결**:
+```python
+file_section = soup.find('div', id='file')
+if file_section:
+    file_links = file_section.find_all('a', href=True)
+    for link in file_links:
+        if 'filedown' in link.get('href', ''):
+            # 첨부파일 처리
+```
+
+## 확장 가능성
+
+### 1. 설정 파일 지원
+현재 하드코딩된 설정을 YAML 파일로 외부화 가능:
+```yaml
+jica:
+  base_url: "https://www.jica.or.kr"
+  list_url: "https://www.jica.or.kr/2025/inner.php?sMenu=A1000"
+  pagination:
+    type: "query_param"
+    param: "pno"
+  selectors:
+    table: "table.ta_bo"
+    rows: "tbody tr"
+    title_link: "td:nth-child(3) a"
+```
+
+### 2. 다른 메뉴 지원
+sMenu 파라미터만 변경하면 다른 게시판도 스크래핑 가능:
+- A1000: 사업공고
+- A2000: 공지사항  
+- A3000: 보도자료
+
+### 3. 성능 최적화
+- 동시 다운로드 지원
+- 이미지 파일 스크래핑 추가
+- 캐싱 시스템 도입
+
+## 운영 고려사항
+
+### 1. 로봇 정책
+- robots.txt 준수 (무시 설정 적용)
+- 요청 간격 조절 (현재 1초)
+- User-Agent 명시
+
+### 2. 오류 처리
+- SSL 인증서 검증 활성화
+- 타임아웃 설정 (30초)
+- 재시도 로직 미적용 (사이트 안정적)
+
+### 3. 모니터링 포인트
+- 사이트 구조 변경 감지
+- 파일 다운로드 실패율
+- 인코딩 오류 발생률
+
+이 JICA 스크래퍼는 표준적인 PHP 게시판 구조를 가진 사이트들의 참고 모델로 활용할 수 있으며, Enhanced 아키텍처의 장점을 잘 보여주는 사례입니다.

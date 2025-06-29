@@ -1,0 +1,212 @@
+# GCAF (경남문화예술진흥원) Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 기본 정보
+- **사이트명**: 경남문화예술진흥원 (GCAF)
+- **URL**: https://www.gcaf.or.kr/bbs/board.php?bo_table=sub3_7
+- **게시판 성격**: 사업공고·입찰 게시판
+- **기술 스택**: 그누보드(Gnuboard) 기반 PHP 게시판
+
+## 사이트 특성 분석
+
+### 1. 페이지네이션 구조
+- **방식**: GET 파라미터 기반
+- **패턴**: `?bo_table=sub3_7&page=2`
+- **특징**: 표준적인 PHP 게시판 페이지네이션
+
+### 2. 목록 페이지 구조
+```html
+<table>
+  <tbody>
+    <tr>
+      <td class="td_num2">번호</td>
+      <td class="td_subject">제목링크</td>
+      <td class="td_num">날짜1</td>
+      <td class="td_num">날짜2</td>
+      <td class="td_num">필드</td>
+      <td class="td_num">조회수</td>
+      <td class="td_datetime">작성일</td>
+    </tr>
+  </tbody>
+</table>
+```
+
+### 3. 상세 페이지 구조
+- **제목**: `<h1 id="bo_v_title">` 또는 `<h2 id="bo_v_title">`
+- **본문**: `<div id="bo_v_con">` 또는 `<div class="bo_v_con">`
+- **첨부파일**: `<div class="bo_v_file">` 또는 `<div id="bo_v_file">`
+
+## 기술적 구현 특징
+
+### 1. 표준 HTML 테이블 기반
+```python
+def parse_list_page(self, html_content: str) -> list:
+    soup = BeautifulSoup(html_content, 'html.parser')
+    table = soup.find('table')
+    tbody = table.find('tbody') or table
+    
+    for row in tbody.find_all('tr'):
+        cells = row.find_all('td')
+        if len(cells) < 5:
+            continue
+        
+        # 제목 셀 (두 번째 컬럼)
+        title_cell = cells[1]
+        link_elem = title_cell.find('a')
+```
+
+### 2. 표준 그누보드 구조 파싱
+```python
+def parse_detail_page(self, html_content: str, announcement_url: str) -> dict:
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # 제목 추출 - 여러 패턴 지원
+    title_elem = soup.find('h1', {'id': 'bo_v_title'}) or soup.find('h2', {'id': 'bo_v_title'})
+    if not title_elem:
+        title_elem = soup.find('span', {'id': 'bo_v_title'})
+    
+    # 본문 추출 - ID와 클래스 모두 지원
+    content_area = soup.find('div', {'id': 'bo_v_con'})
+    if not content_area:
+        content_area = soup.find('div', class_='bo_v_con')
+```
+
+### 3. 첨부파일 처리 (현재 사이트에는 첨부파일 없음)
+```python
+def _extract_attachments(self, soup: BeautifulSoup) -> list:
+    attachments = []
+    
+    # 첨부파일 영역 찾기
+    file_area = soup.find('div', class_='bo_v_file')
+    if not file_area:
+        file_area = soup.find('div', {'id': 'bo_v_file'})
+    
+    if file_area:
+        file_links = file_area.find_all('a')
+        for link in file_links:
+            href = link.get('href', '')
+            if href and 'download' in href.lower():
+                file_url = urljoin(self.base_url, href)
+                file_name = link.get_text(strip=True)
+                attachments.append({
+                    'url': file_url,
+                    'name': file_name
+                })
+    
+    return attachments
+```
+
+## 테스트 결과
+
+### 성능 통계
+- **테스트 범위**: 3페이지 (45개 공고)
+- **성공률**: 100% (45/45)
+- **원본 URL 포함률**: 100%
+- **첨부파일**: 0개 (사이트 특성상 첨부파일 없음)
+- **처리 시간**: 약 2분 (페이지당 40초)
+
+### 주요 특징
+- **안정성**: 매우 안정적인 표준 PHP 게시판
+- **구조**: 일관된 HTML 구조로 파싱 용이
+- **인코딩**: UTF-8로 문제없음
+- **SSL**: HTTPS 지원 정상
+
+## Enhanced 스크래퍼 장점
+
+### 1. 중복 검사 시스템
+```python
+# 처리된 제목 자동 관리
+self.load_processed_titles(output_base)
+new_announcements, should_stop = self.filter_new_announcements(announcements)
+self.add_processed_title(detail_data['title'])
+self.save_processed_titles()
+```
+
+### 2. 표준화된 출력 구조
+```
+output/gcaf/
+├── 001_공고제목1/
+│   └── content.md
+├── 002_공고제목2/
+│   └── content.md
+└── processed_titles_enhancedgcaf.json
+```
+
+### 3. 메타데이터 보존
+```markdown
+# 공고제목
+
+**게시일**: 2025-06-05
+**조회수**: 315
+**원본 URL**: https://www.gcaf.or.kr/bbs/board.php?bo_table=sub3_7&wr_id=1884
+
+본문 내용...
+```
+
+## 재사용 가능한 패턴
+
+### 1. 그누보드 기반 사이트
+- 동일한 구조의 다른 그누보드 사이트에 바로 적용 가능
+- ID/클래스명만 변경하면 재사용 가능
+
+### 2. 표준 테이블 기반 목록
+- 대부분의 정부기관/공공기관 게시판에 적용 가능
+- 컬럼 순서만 조정하면 재사용 가능
+
+## 개발 과정에서의 해결책
+
+### 1. Enhanced Base 클래스 메소드 이슈
+**문제**: `save_processed_title` 메소드 없음
+**해결**: `add_processed_title`로 변경하고 `save_processed_titles` 호출 추가
+
+### 2. 중복 검사 시스템 통합
+**구현**: 
+- 시작 시 `load_processed_titles()` 호출
+- 처리 시 `add_processed_title()` 호출  
+- 종료 시 `save_processed_titles()` 호출
+
+## 특별한 기술적 도전
+
+### 1. 표준적인 사이트 구조
+- **특징**: 매우 표준적인 그누보드 구조로 특별한 기술적 도전 없음
+- **장점**: 안정적이고 예측 가능한 파싱 가능
+
+### 2. 첨부파일 없는 사이트
+- **특징**: 현재 사이트에는 첨부파일이 있는 공고가 없음
+- **대응**: 첨부파일 처리 로직은 구현했지만 실제로는 사용되지 않음
+
+## 코드 재사용 권장사항
+
+### 1. 그누보드 기반 사이트
+```python
+# 동일한 패턴의 다른 사이트에 적용 시
+class EnhancedNewSiteScraper(StandardTableScraper):
+    def __init__(self):
+        super().__init__()
+        self.base_url = "https://newsite.com"
+        self.list_url = "https://newsite.com/bbs/board.php?bo_table=notice"
+        # 나머지 코드는 GCAF와 동일
+```
+
+### 2. 테이블 구조가 다른 경우
+```python
+def parse_list_page(self, html_content: str) -> list:
+    # 컬럼 인덱스만 조정
+    title_cell = cells[2]  # 제목이 3번째 컬럼인 경우
+    date_cell = cells[4]   # 날짜가 5번째 컬럼인 경우
+```
+
+## 성능 최적화 권장사항
+
+### 1. 요청 간격 조절
+- 현재: 1초 대기
+- 권장: 서버 부하에 따라 조절 가능
+
+### 2. 대용량 처리 시
+- 페이지별 처리 후 중간 저장
+- 메모리 효율적인 스트리밍 처리
+
+## 결론
+
+GCAF 사이트는 매우 표준적인 그누보드 기반 게시판으로, Enhanced 스크래퍼 아키텍처의 장점을 잘 보여주는 예시입니다. 안정적인 파싱, 중복 검사, 표준화된 출력 등 모든 기능이 정상적으로 작동하며, 다른 유사한 사이트에 쉽게 적용할 수 있는 재사용 가능한 패턴을 제공합니다.
+
+특히 정부기관이나 공공기관의 그누보드 기반 게시판에는 거의 수정 없이 바로 적용 가능한 범용적인 구조를 가지고 있습니다.

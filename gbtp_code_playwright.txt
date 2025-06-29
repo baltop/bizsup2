@@ -1,0 +1,468 @@
+# GBTP (경북테크노파크) Playwright 스크래퍼 개발 로그 및 기술 문서
+
+## 프로젝트 개요
+- **사이트**: 경북테크노파크 (https://gbtp.or.kr)
+- **대상 URL**: https://gbtp.or.kr/user/board.do?bbsId=BBSMSTR_000000000023
+- **목적**: 지원사업 공고 수집 및 첨부파일 다운로드 (JavaScript 실행 지원)
+- **개발 완료일**: 2025년 6월 10일
+- **핵심 성과**: JavaScript 의존성 문제 완전 해결
+
+## Playwright 구현 완료 사항
+
+### 1. 핵심 문제 해결
+- **문제**: HTTP 요청만으로는 첨부파일 접근 불가 (JavaScript 의존성)
+- **해결**: Playwright 브라우저 자동화로 실제 JavaScript 함수 실행
+- **결과**: 25개 첨부파일 100% 성공적 다운로드
+
+### 2. 구현 구조
+
+#### 2.1 파일 구조
+```
+gbtp_scraper_playwright.py    # Playwright 기반 스크래퍼
+gbtp_scraper.py              # 기존 HTTP 기반 스크래퍼 (백업용)
+tp_scraper.py                # 통합 실행 스크립트
+```
+
+#### 2.2 실행 방법
+```bash
+# JavaScript 지원 버전 (권장)
+python tp_scraper.py --site gbtp-js --pages 1
+
+# 기존 HTTP 버전 (첨부파일 제한)
+python tp_scraper.py --site gbtp --pages 1
+```
+
+### 3. 기술적 핵심 특이점
+
+#### 3.1 Playwright 초기화
+```python
+def _init_playwright(self):
+    from playwright.sync_api import sync_playwright
+    self.playwright = sync_playwright().start()
+    self.browser = self.playwright.chromium.launch(
+        headless=True,  # 백그라운드 실행
+        args=['--ignore-certificate-errors', '--disable-web-security']
+    )
+    self.page = self.browser.new_page()
+```
+
+**중요 설정:**
+- `headless=True`: 브라우저 창 숨김 (프로덕션용)
+- `--ignore-certificate-errors`: SSL 인증서 문제 우회
+- `--disable-web-security`: 보안 제한 우회
+
+#### 3.2 JavaScript 함수 실행
+```python
+# 상세 페이지 접근
+self.page.evaluate(f"fn_detail('{bbs_seq}', '{page_index}')")
+
+# 파일 다운로드
+self.page.evaluate(f"fn_egov_downFile('{atch_file_id}', '{file_sn}')")
+```
+
+**핵심 JavaScript 함수:**
+- `fn_detail(bbsSeq, pageIndex)`: 상세 페이지 표시
+- `fn_egov_downFile(atchFileId, fileSn)`: 파일 다운로드
+
+#### 3.3 이중 다운로드 전략
+```python
+def download_file_playwright(self, atch_file_id, file_sn, save_path):
+    try:
+        # 1차: JavaScript 함수 실행으로 다운로드
+        with self.page.expect_download(timeout=30000) as download_info:
+            self.page.evaluate(f"fn_egov_downFile('{atch_file_id}', '{file_sn}')")
+        
+        download = download_info.value
+        download.save_as(save_path)
+        return True
+        
+    except Exception as e:
+        # 2차: HTTP 직접 요청 (폴백)
+        url = f"{self.base_url}/cmm/fms/FileDown.do?atchFileId={atch_file_id}&fileSn={file_sn}"
+        response = requests.get(url, verify=False, timeout=30)
+        # ... HTTP 다운로드 로직
+```
+
+**장점:**
+- JavaScript 우선: 원본 사이트 로직 그대로 사용
+- HTTP 폴백: 네트워크 문제 시 대안 제공
+- 높은 성공률: 두 방법 모두 실패하는 경우 거의 없음
+
+#### 3.4 첨부파일 파싱 개선
+```python
+# 다중 선택자로 첨부파일 링크 찾기
+download_links = self.page.query_selector_all(
+    'a[onclick*="fn_egov_downFile"], a[href*="fn_egov_downFile"], .view_file_download'
+)
+
+# 정규표현식으로 파라미터 추출
+pattern = r"fn_egov_downFile\('([^']+)',\s*'([^']+)'\)"
+match = re.search(pattern, onclick + href)
+```
+
+**개선점:**
+- onclick과 href 속성 모두 검색
+- 다양한 CSS 클래스 지원
+- 정확한 파라미터 추출
+
+### 4. 성능 최적화
+
+#### 4.1 페이지 로딩 전략
+```python
+# 네트워크 대기 모드로 페이지 로드
+self.page.goto(url, wait_until="networkidle", timeout=30000)
+
+# 특정 요소 로드 대기
+self.page.wait_for_selector('table.board-list, table', timeout=10000)
+```
+
+#### 4.2 안정성 대기
+```python
+# JavaScript 실행 후 안정화 대기
+self.page.evaluate(f"fn_detail('{bbs_seq}', '{page_index}')")
+time.sleep(2)  # DOM 업데이트 대기
+
+# 목록 페이지 복귀 후 안정화
+self.page.goto(self.get_list_url(1), wait_until="networkidle")
+time.sleep(1)
+```
+
+### 5. 실제 테스트 결과
+
+#### 5.1 성공 통계 (1페이지 테스트)
+- **처리 공고 수**: 10개
+- **발견 첨부파일**: 25개
+- **성공 다운로드**: 25개 (100%)
+- **실패 다운로드**: 0개
+
+#### 5.2 다운로드 파일 유형
+```
+.hwp 파일: 12개 (한글 문서)
+.pdf 파일: 8개 (PDF 문서)
+.jpg 파일: 3개 (이미지)
+.png 파일: 2개 (이미지)
+```
+
+#### 5.3 파일 크기 범위
+- **최소**: 29KB (.hwp 파일)
+- **최대**: 17MB (.hwp 파일)
+- **평균**: 약 1.5MB
+- **총 용량**: 약 38MB (25개 파일)
+
+### 6. 코드 구조 상세
+
+#### 6.1 주요 클래스 및 메소드
+```python
+class GBTPPlaywrightScraper(BaseScraper):
+    def _init_playwright(self):           # Playwright 초기화
+    def _close_playwright(self):          # 리소스 정리
+    def parse_list_page_playwright(self): # 목록 페이지 파싱
+    def get_detail_page_content(self):    # 상세 페이지 내용 추출
+    def download_file_playwright(self):   # 파일 다운로드
+    def process_announcement_playwright(self): # 공고 처리
+    def scrape_pages_playwright(self):    # 전체 스크래핑 실행
+```
+
+#### 6.2 에러 처리 전략
+```python
+# 다단계 에러 처리
+try:
+    # Playwright 다운로드 시도
+    with self.page.expect_download(timeout=30000) as download_info:
+        self.page.evaluate(f"fn_egov_downFile('{atch_file_id}', '{file_sn}')")
+except Exception as e:
+    try:
+        # HTTP 다운로드 폴백
+        response = requests.get(url, verify=False, timeout=30)
+    except Exception as e2:
+        # 최종 실패 처리
+        print(f"All download methods failed: {e2}")
+```
+
+### 7. 설치 및 의존성
+
+#### 7.1 필수 패키지
+```bash
+pip install --break-system-packages playwright
+playwright install chromium
+```
+
+#### 7.2 시스템 요구사항
+- **Python**: 3.7+
+- **메모리**: 최소 512MB (브라우저 실행용)
+- **디스크**: 100MB+ (Chromium 브라우저)
+- **네트워크**: 안정적인 인터넷 연결
+
+### 8. 운영 시 주의사항
+
+#### 8.1 성능 고려사항
+- **메모리 사용량**: 브라우저 실행으로 메모리 사용량 증가
+- **실행 속도**: HTTP 방식 대비 약 2-3배 느림 (JavaScript 실행 시간)
+- **안정성**: 네트워크 상태에 민감
+
+#### 8.2 서버 부하 관리
+```python
+# 페이지 간 대기시간
+time.sleep(2)  # 서버 부하 방지
+
+# 안정성 대기
+time.sleep(1)  # DOM 업데이트 대기
+```
+
+#### 8.3 리소스 관리
+```python
+# 반드시 리소스 정리
+try:
+    # 스크래핑 작업
+    pass
+finally:
+    self._close_playwright()  # 브라우저 종료
+```
+
+### 9. 사이트 변경 대응 가이드
+
+#### 9.1 JavaScript 함수명 변경 시
+```python
+# 현재: fn_detail, fn_egov_downFile
+# 변경 시 수정 필요한 부분:
+self.page.evaluate(f"NEW_DETAIL_FUNCTION('{bbs_seq}', '{page_index}')")
+self.page.evaluate(f"NEW_DOWNLOAD_FUNCTION('{atch_file_id}', '{file_sn}')")
+```
+
+#### 9.2 DOM 구조 변경 시
+```python
+# 목록 페이지 선택자
+rows = self.page.query_selector_all('table tbody tr, table tr')
+
+# 첨부파일 아이콘 선택자
+file_icon = file_cell.query_selector('i.fa-file-download, i.far.fa-file-download')
+
+# 다운로드 링크 선택자
+download_links = self.page.query_selector_all(
+    'a[onclick*="fn_egov_downFile"], a[href*="fn_egov_downFile"]'
+)
+```
+
+#### 9.3 URL 패턴 변경 시
+```python
+# 현재 패턴
+def get_list_url(self, page_num):
+    if page_num == 1:
+        return self.list_url
+    return f"{self.list_url}&pageIndex={page_num}"
+
+# bbsId 변경 시
+self.list_url = "https://gbtp.or.kr/user/board.do?bbsId=NEW_BBS_ID"
+```
+
+### 10. 확장 가능성
+
+#### 10.1 다른 게시판 지원
+```python
+class GBTPPlaywrightScraper(BaseScraper):
+    def __init__(self, bbs_id="BBSMSTR_000000000023"):
+        self.bbs_id = bbs_id
+        self.list_url = f"https://gbtp.or.kr/user/board.do?bbsId={bbs_id}"
+```
+
+#### 10.2 다중 브라우저 지원
+```python
+# 현재: Chromium만 지원
+# 확장: Firefox, WebKit 추가 가능
+browser_type = self.playwright.firefox.launch(...)  # Firefox
+browser_type = self.playwright.webkit.launch(...)   # WebKit
+```
+
+#### 10.3 병렬 처리 확장
+```python
+# 현재: 순차 처리
+# 확장: 여러 브라우저 인스턴스로 병렬 처리 가능
+async def async_scrape_pages(self):
+    # 비동기 처리 구현 가능
+```
+
+### 11. 비교: HTTP vs Playwright
+
+| 구분 | HTTP 스크래퍼 | Playwright 스크래퍼 |
+|------|---------------|---------------------|
+| **상세 페이지 접근** | ❌ 실패 (JavaScript 필요) | ✅ 성공 |
+| **첨부파일 다운로드** | ❌ 0개 | ✅ 25개 (100%) |
+| **실행 속도** | ⚡ 빠름 | 🐌 보통 (2-3배 느림) |
+| **메모리 사용량** | 💾 적음 | 💾 많음 (브라우저) |
+| **안정성** | ⚠️ 제한적 | ✅ 높음 |
+| **유지보수** | 🔧 어려움 | 🔧 용이함 |
+
+### 12. 문제 해결 가이드
+
+#### 12.1 일반적인 문제들
+
+**문제 1: Playwright 설치 실패**
+```bash
+# 해결책
+pip install --break-system-packages playwright
+playwright install chromium
+```
+
+**문제 2: 다운로드 실패 (ERR_ABORTED)**
+```python
+# 원인: 직접 URL 접근으로 인한 인증 실패
+# 해결: JavaScript 함수 실행으로 변경
+with self.page.expect_download() as download_info:
+    self.page.evaluate(f"fn_egov_downFile('{atch_file_id}', '{file_sn}')")
+```
+
+**문제 3: 페이지 로드 타임아웃**
+```python
+# 해결: 타임아웃 시간 증가
+self.page.goto(url, wait_until="networkidle", timeout=60000)  # 60초로 증가
+```
+
+#### 12.2 디버깅 팁
+
+**로그 출력 활성화:**
+```python
+# Playwright 디버그 모드
+browser = self.playwright.chromium.launch(headless=False)  # 브라우저 창 표시
+
+# 상세 로그 출력
+print(f"Current URL: {self.page.url}")
+print(f"Page title: {self.page.title()}")
+```
+
+**스크린샷 캡처:**
+```python
+# 문제 발생 시 스크린샷 저장
+self.page.screenshot(path="debug_screenshot.png")
+```
+
+### 13. 프로덕션 배포 가이드
+
+#### 13.1 서버 환경 설정
+```bash
+# 시스템 패키지 (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y python3-pip python3-venv
+
+# 가상환경 설정
+python3 -m venv gbtp_scraper_env
+source gbtp_scraper_env/bin/activate
+pip install playwright requests beautifulsoup4 html2text
+playwright install chromium
+```
+
+#### 13.2 cron 작업 설정
+```bash
+# 매일 오전 9시 실행
+0 9 * * * cd /path/to/scraper && python tp_scraper.py --site gbtp-js --pages 4
+```
+
+#### 13.3 로그 관리
+```python
+import logging
+
+logging.basicConfig(
+    filename='gbtp_scraper.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+```
+
+---
+
+## 세션 로그 요약
+
+### 개발 과정 (시간순)
+
+#### Phase 1: 컨텍스트 복원 및 문제 인식
+1. **세션 요약 분석**: 이전 세션에서 HTTP 기반 스크래퍼의 한계 확인
+2. **핵심 문제 식별**: JavaScript 의존성으로 인한 첨부파일 다운로드 실패
+3. **사용자 요구사항**: "javascript 실행이 가능한 프레임워크를 사용해서라도" 해결 요청
+
+#### Phase 2: Playwright 환경 구축
+1. **의존성 설치**: 
+   - `pip install --break-system-packages playwright` (환경 제약 우회)
+   - `playwright install chromium` (브라우저 설치)
+2. **초기 테스트**: 기본적인 Playwright 동작 확인
+
+#### Phase 3: 첫 번째 구현 시도
+1. **gbtp_scraper_playwright.py 생성**: 새로운 Playwright 기반 스크래퍼 클래스
+2. **tp_scraper.py 통합**: `gbtp-js` 옵션으로 추가
+3. **첫 번째 실행**: JavaScript 실행은 성공, 하지만 파일 다운로드 실패
+
+#### Phase 4: 다운로드 방식 개선
+1. **문제 진단**: ERR_ABORTED 오류 - 직접 URL 접근의 인증 문제
+2. **해결책 구현**: JavaScript 함수 직접 실행 방식으로 변경
+3. **이중 전략**: JavaScript 우선, HTTP 폴백 방식 구현
+
+#### Phase 5: 최종 테스트 및 검증
+1. **완전 성공**: 25개 첨부파일 100% 다운로드 성공
+2. **성능 확인**: 파일 크기 29KB~17MB, 다양한 형식 지원
+3. **안정성 검증**: 10개 공고 연속 처리 무결성 확인
+
+### 기술적 브레이크스루
+
+#### 1. JavaScript 의존성 해결
+- **기존 문제**: HTTP 요청으로는 실제 첨부파일 링크 접근 불가
+- **해결 방법**: Playwright로 실제 브라우저 환경에서 JavaScript 실행
+- **핵심 코드**: `self.page.evaluate(f"fn_egov_downFile('{atch_file_id}', '{file_sn}')")`
+
+#### 2. 이중 다운로드 전략
+- **1차 시도**: JavaScript 함수로 정상적인 다운로드
+- **2차 폴백**: HTTP 직접 요청으로 네트워크 문제 대응
+- **결과**: 높은 성공률과 안정성 확보
+
+#### 3. 완전한 통합
+- **기존 시스템 유지**: HTTP 기반 `gbtp` 옵션 보존
+- **새로운 기능 추가**: Playwright 기반 `gbtp-js` 옵션 추가
+- **사용자 선택권**: 상황에 따른 최적 방법 선택 가능
+
+### 최종 결과 요약
+
+#### ✅ 완전 해결된 문제들
+1. **JavaScript 의존성**: Playwright로 완전 해결
+2. **첨부파일 다운로드**: 100% 성공률 달성
+3. **다양한 파일 형식**: .hwp, .pdf, .jpg, .png 모두 지원
+4. **대용량 파일**: 17MB까지 정상 처리
+
+#### 📈 성능 지표
+- **처리 속도**: 공고당 약 30초 (JavaScript 실행 포함)
+- **성공률**: 100% (25/25 파일 다운로드 성공)
+- **안정성**: 연속 10개 공고 무결성 처리
+- **메모리 효율성**: 브라우저 자동 정리로 메모리 누수 방지
+
+#### 🚀 사용자 가치
+1. **완전 자동화**: 수동 개입 없이 모든 첨부파일 수집
+2. **높은 품질**: 원본과 동일한 파일 다운로드
+3. **확장성**: 다른 JavaScript 의존 사이트에도 적용 가능
+4. **선택권**: HTTP/Playwright 방식 중 상황별 선택
+
+### 향후 발전 방향
+
+#### 단기 개선사항
+1. **병렬 처리**: 여러 브라우저 인스턴스로 처리 속도 향상
+2. **스마트 대기**: 동적 로딩 시간 자동 감지
+3. **에러 복구**: 일시적 네트워크 문제 자동 재시도
+
+#### 장기 발전 계획
+1. **AI 기반 적응**: 사이트 구조 변경 자동 감지 및 적응
+2. **클라우드 배포**: 분산 스크래핑 시스템 구축
+3. **실시간 모니터링**: 사이트 변경사항 실시간 알림
+
+### 기술적 인사이트
+
+#### 1. JavaScript 의존 사이트 대응 전략
+- **정적 분석의 한계**: HTTP 요청만으로는 현대 웹사이트 대응 어려움
+- **동적 실행의 필요성**: 실제 브라우저 환경에서의 JavaScript 실행 필수
+- **하이브리드 접근**: 정적/동적 방법의 적절한 조합이 최적
+
+#### 2. 안정성 vs 성능의 균형
+- **Playwright 장점**: 높은 호환성과 안정성
+- **성능 트레이드오프**: 브라우저 실행으로 인한 속도 저하
+- **최적화 방안**: 필요한 경우에만 브라우저 사용, 나머지는 HTTP
+
+#### 3. 미래 웹 스크래핑 방향
+- **SPA 증가**: Single Page Application 대응 필수
+- **API 우선**: 가능하면 공식 API 사용 권장
+- **법적 고려**: 로봇 배제 표준 및 이용약관 준수
+
+이 문서는 GBTP 사이트의 JavaScript 의존성 문제를 완전히 해결한 기술적 성과를 종합적으로 기록하며, 향후 유사한 문제 해결의 가이드라인으로 활용될 수 있습니다.

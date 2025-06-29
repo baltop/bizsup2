@@ -1,0 +1,243 @@
+# YeongcheonCCI(영천상공회의소) 스크래퍼 개발 인사이트
+
+## 1. 사이트 기본 정보
+- **사이트명**: 영천상공회의소 (YeongcheonCCI)
+- **URL**: https://yeongcheoncci.korcham.net/front/board/boardContentsListPage.do?boardId=10342&menuId=5170
+- **사이트 코드**: yeongcheoncci
+- **개발 일자**: 2024년 기준
+- **인코딩**: UTF-8
+
+## 2. 사이트 구조 분석
+
+### 2.1 페이지 구조
+- **목록 페이지**: 표준 HTML 테이블 구조이지만 JavaScript 렌더링 필요
+- **페이지네이션**: GET 파라미터 기반 (`?page=2`)
+- **상세 페이지**: JavaScript 함수 호출 기반 (`contentsView('115761')`)
+
+### 2.2 HTML 구조 특징
+```html
+<!-- 목록 페이지 구조 -->
+<table>
+  <tbody>
+    <tr>
+      <td>번호</td>
+      <td><a href="javascript:contentsView('115761')">제목</a></td>
+      <td>날짜</td>
+    </tr>
+  </tbody>
+</table>
+```
+
+### 2.3 JavaScript 기반 네비게이션
+- **목록 페이지**: 정적 HTML로는 테이블 요소를 찾을 수 없음
+- **상세 페이지**: `contentsView()` JavaScript 함수로만 접근 가능
+- **동적 로딩**: 페이지 콘텐츠가 JavaScript로 동적 생성됨
+
+## 3. 기술적 구현 특징
+
+### 3.1 Enhanced 스크래퍼 아키텍처
+```python
+class EnhancedYeongcheonCCIScraper(StandardTableScraper):
+    def __init__(self):
+        super().__init__()
+        self.base_url = "https://yeongcheoncci.korcham.net"
+        self.list_url = "https://yeongcheoncci.korcham.net/front/board/boardContentsListPage.do?boardId=10342&menuId=5170"
+        self.detail_base_url = "https://yeongcheoncci.korcham.net/front/board/boardContentsView.do"
+        
+        # 사이트 특화 설정
+        self.verify_ssl = True
+        self.default_encoding = 'utf-8'
+        self.timeout = 30
+        self.delay_between_requests = 2
+```
+
+### 3.2 Playwright 통합 파싱
+정적 HTML 파싱 실패 시 자동으로 Playwright로 전환:
+```python
+def parse_list_page(self, html_content: str) -> list:
+    soup = BeautifulSoup(html_content, 'html.parser')
+    # ... 정적 파싱 시도 ...
+    
+    if not rows:
+        logger.warning("JavaScript 렌더링이 필요할 수 있습니다.")
+        return self._parse_with_playwright()
+```
+
+### 3.3 다단계 선택자 전략
+```python
+def _parse_with_playwright(self):
+    selectors = ['tbody tr', 'table tr', 'tr']
+    for selector in selectors:
+        temp_rows = page.locator(selector).all()
+        if temp_rows:
+            rows = temp_rows
+            break
+```
+
+## 4. 주요 해결책
+
+### 4.1 JavaScript 렌더링 문제
+**문제**: 정적 HTML에서 테이블 요소를 찾을 수 없음
+**해결**: Playwright 자동 전환 메커니즘 구현
+
+### 4.2 Content ID 추출
+**문제**: `contentsView('115761')` 형태에서 ID 추출 필요
+**해결**: href와 onclick 속성 모두 확인하는 다단계 추출
+```python
+# href에서 먼저 시도
+if href and 'contentsView' in href:
+    match = re.search(r"contentsView\('(\d+)'\)", href)
+    if match:
+        content_id = match.group(1)
+
+# onclick에서 시도
+if not content_id and onclick:
+    match = re.search(r"contentsView\('(\d+)'\)", onclick)
+```
+
+### 4.3 상세 페이지 접근 방법
+**시도 1**: 직접 URL 구성 (`boardContentsView.do?contentsId=115761`)
+**시도 2**: JavaScript 함수 실행 (`page.evaluate(f"contentsView('{content_id}')")`)
+
+## 5. 기술적 도전과 한계
+
+### 5.1 주요 실패 사항
+1. **상세 페이지 네비게이션 실패**
+   - 모든 상세 페이지 접근 시도가 실패
+   - 에러: "Page.content: Unable to retrieve content because the page is navigating and changing the content"
+
+2. **JavaScript 함수 실행 실패**
+   - `contentsView()` 함수 호출이 페이지 전환을 유발하지만 내용 로드 실패
+   - 복잡한 세션 기반 네비게이션으로 추정
+
+3. **동적 콘텐츠 타이밍 문제**
+   - `wait_for_load_state('networkidle')` 사용에도 불구하고 콘텐츠 로드 실패
+   - 페이지 상태 변화와 콘텐츠 로드 간의 타이밍 이슈
+
+### 5.2 근본적인 기술적 제약
+- **세션 기반 네비게이션**: 복잡한 서버 세션 관리 필요
+- **AJAX 기반 콘텐츠 로딩**: 표준 HTTP 요청으로는 접근 불가
+- **동적 URL 생성**: JavaScript 내부에서 동적으로 URL이 생성되는 구조
+
+## 6. 테스트 결과
+
+### 6.1 목록 페이지 파싱 성공
+- **Playwright 사용**: 각 페이지당 15개 공고 성공적으로 파싱
+- **Content ID 추출**: 모든 공고에서 Content ID 성공적으로 추출
+- **총 45개 공고**: 3페이지에서 45개 공고 메타데이터 수집 완료
+
+### 6.2 상세 페이지 접근 실패
+- **성공률**: 0% (45개 공고 모두 실패)
+- **콘텐츠 파일**: 0개 생성
+- **첨부파일**: 0개 다운로드
+- **폴더 생성**: 45개 빈 폴더만 생성
+
+### 6.3 에러 통계
+```
+[ERROR] 상세 페이지 가져오기 실패: 공고제목1
+[ERROR] 상세 페이지 가져오기 실패: 공고제목2
+...
+총 45개 공고 모두 실패
+```
+
+## 7. 재사용 가능한 패턴
+
+### 7.1 Playwright 자동 전환 패턴
+```python
+def parse_list_page(self, html_content: str) -> list:
+    # 정적 파싱 시도
+    soup = BeautifulSoup(html_content, 'html.parser')
+    # ... 파싱 로직 ...
+    
+    if not successful:
+        # Playwright 자동 전환
+        return self._parse_with_playwright()
+```
+
+### 7.2 다단계 선택자 시도
+```python
+selectors = ['tbody tr', 'table tr', 'tr']
+for selector in selectors:
+    elements = page.locator(selector).all()
+    if elements:
+        return elements
+```
+
+### 7.3 Content ID 추출 패턴
+```python
+def extract_content_id(self, element):
+    for attr in ['href', 'onclick']:
+        value = element.get_attribute(attr) or ''
+        if 'contentsView' in value:
+            match = re.search(r"contentsView\('(\d+)'\)", value)
+            if match:
+                return match.group(1)
+    return None
+```
+
+## 8. 향후 개선 방안
+
+### 8.1 고급 Playwright 기법
+1. **네트워크 인터셉트**: 상세 페이지 로드 시 네트워크 요청 모니터링
+2. **이벤트 리스너**: 페이지 이벤트 감지로 로딩 완료 시점 정확히 파악
+3. **쿠키/세션 관리**: 서버 세션 상태 유지
+
+### 8.2 대안적 접근 방법
+1. **API 엔드포인트 탐지**: 개발자 도구로 실제 API 호출 분석
+2. **POST 요청 분석**: contentsView 함수의 실제 POST 요청 파라미터 파악
+3. **세션 기반 스크래핑**: 초기 세션 획득 후 유지하는 방식 구현
+
+### 8.3 타임아웃 및 재시도 로직
+```python
+def get_detail_page_with_retry(self, content_id: str, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            # 상세 페이지 접근 시도
+            html_content = self.get_detail_page_with_playwright(content_id)
+            if html_content and len(html_content) > 1000:
+                return html_content
+            time.sleep(5)  # 대기 후 재시도
+        except Exception as e:
+            logger.warning(f"시도 {attempt + 1} 실패: {e}")
+    return ""
+```
+
+## 9. 특별한 기술적 도전
+
+### 9.1 JavaScript 함수 호출 문제
+YeongcheonCCI 사이트는 단순한 href 기반이 아닌 JavaScript 함수 호출로만 상세 페이지에 접근할 수 있습니다. 이는 다음과 같은 특별한 도전을 제기합니다:
+
+1. **함수 컨텍스트**: `contentsView()` 함수가 특정 페이지 컨텍스트에서만 동작
+2. **세션 의존성**: 함수 실행이 서버 세션 상태에 의존
+3. **동적 URL 생성**: 함수 내부에서 동적으로 URL을 생성하고 페이지 전환
+
+### 9.2 Playwright 한계 경험
+이 프로젝트에서 Playwright의 한계를 경험했습니다:
+- `page.evaluate()` 함수 실행은 성공하지만 결과 페이지 로드 실패
+- `wait_for_load_state()` 메서드가 페이지 전환 상태를 제대로 감지하지 못함
+- 복잡한 JavaScript 애플리케이션에서는 추가적인 동기화 로직이 필요
+
+## 10. 결론
+
+YeongcheonCCI 스크래퍼는 목록 페이지 파싱에서는 완전한 성공을 거두었지만, 상세 페이지 접근에서는 근본적인 기술적 제약에 부딪혔습니다. 이는 최신 웹 애플리케이션의 복잡성과 JavaScript 기반 네비게이션의 한계를 보여주는 사례입니다.
+
+**성공 요소**:
+- Playwright 자동 전환 메커니즘
+- 다단계 선택자 전략
+- Content ID 추출 로직
+
+**실패 요소**:
+- JavaScript 함수 기반 네비게이션
+- 복잡한 세션 관리
+- 동적 콘텐츠 로딩 타이밍
+
+향후 유사한 사이트를 대상으로 할 때는 초기 분석 단계에서 JavaScript 함수 호출 패턴을 더욱 면밀히 분석하고, 네트워크 레벨에서의 요청 분석을 통해 직접적인 API 호출 방법을 찾는 것이 바람직합니다.
+
+## 11. 개발자를 위한 교훈
+
+1. **JavaScript 렌더링 사이트**: 정적 파싱과 동적 파싱의 자동 전환 메커니즘 필수
+2. **함수 기반 네비게이션**: onclick 이벤트만으로는 접근이 어려운 사이트 존재
+3. **세션 관리**: 복잡한 웹 애플리케이션에서는 세션 기반 접근 필요
+4. **실패 시 대안**: API 분석, 네트워크 요청 분석 등의 대안적 접근법 준비 필요
+
+이 프로젝트는 웹 스크래핑의 한계와 가능성을 동시에 보여주는 귀중한 경험이었습니다.

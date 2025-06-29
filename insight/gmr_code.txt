@@ -1,0 +1,357 @@
+# 경기도시장상권진흥원(gmr.or.kr) Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+
+### 기본 정보
+- **사이트명**: 경기도시장상권진흥원 (Gyeonggi Market & Commercial District Promotion Agency)
+- **URL**: https://gmr.or.kr/base/board/list?boardManagementNo=1&menuLevel=2&menuNo=14
+- **사이트 타입**: 시장상권 활성화 공고 게시판
+- **인코딩**: UTF-8
+- **SSL**: HTTPS 지원
+- **총 공고 수**: 1,710개 (171페이지)
+
+### 페이지네이션 구조
+- **방식**: GET 파라미터 기반
+- **URL 패턴**: `?boardManagementNo=1&page={페이지번호}&menuLevel=2&menuNo=14`
+- **첫 페이지**: page 파라미터 없음
+- **다음 페이지**: page=2, page=3, ...
+- **페이지당 공고 수**: 10-12개 (가변적)
+- **테스트 범위**: 3페이지 (총 36개 공고)
+
+### HTML 구조 특징
+- **테이블 컨테이너**: `.basicTable2.notice-type`
+- **공고 행**: `table tbody tr`
+- **제목 셀**: 첫 번째 `td` (링크 포함)
+- **날짜 셀**: 두 번째 `td`
+- **카테고리 표시**: 제목에 [기관명] 태그 포함
+
+## 기술적 구현 특징
+
+### 1. 표준 GET 기반 페이지네이션
+```python
+def get_list_url(self, page_num: int) -> str:
+    """페이지별 URL 생성 - GET 파라미터 방식"""
+    if page_num == 1:
+        return self.list_url
+    else:
+        return f"{self.base_url}/base/board/list?boardManagementNo=1&page={page_num}&menuLevel=2&menuNo=14"
+```
+
+### 2. 목록 페이지 파싱
+```python
+def parse_list_page(self, html_content: str) -> List[Dict[str, Any]]:
+    """간결한 2열 테이블 구조 파싱"""
+    table_container = soup.find('div', class_='basicTable2 notice-type')
+    table = table_container.find('table')
+    tbody = table.find('tbody') or table
+    
+    for row in tbody.find_all('tr'):
+        cells = row.find_all('td')
+        if len(cells) >= 2:
+            # 제목 및 링크 (첫 번째 셀)
+            title_cell = cells[0]
+            link_elem = title_cell.find('a')
+            title = link_elem.get_text(strip=True)
+            href = link_elem.get('href', '')
+            detail_url = urljoin(self.base_url, href)
+            
+            # 날짜 (두 번째 셀)
+            date_cell = cells[1]
+            date = date_cell.get_text(strip=True)
+```
+
+### 3. 상세 페이지 구조
+```python
+def parse_detail_page(self, html_content: str) -> Dict[str, Any]:
+    """본문 영역: .noticeView__cont"""
+    content_selectors = [
+        '.noticeView__cont',    # 주요 선택자
+        '.noticeView .content',
+        '.notice_content',
+        '.board_content'
+    ]
+    
+    # 이미지 URL 절대 경로 변환
+    for img in content_area.find_all('img'):
+        src = img.get('src', '')
+        if src and not src.startswith('http'):
+            img['src'] = urljoin(self.base_url, src)
+```
+
+### 4. 첨부파일 다운로드 시스템
+```python
+def _extract_attachments(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+    """첨부파일 영역: .noticeView__file"""
+    attachment_selectors = [
+        '.noticeView__file',
+        '.noticeView__file__list', 
+        '.noticeView__file__list__down'  # 다운로드 링크 직접
+    ]
+    
+    # 다운로드 URL 패턴
+    # https://gmr.or.kr/download/BASIC_ATTACH?storageNo={storage_id}
+```
+
+## 주요 해결책
+
+### 1. 한글 파일명 완벽 처리
+**특징**: UTF-8 인코딩으로 한글 파일명 완벽 지원
+**구현**: 다단계 인코딩 처리 메커니즘
+
+```python
+def _extract_filename(self, response: requests.Response, default_path: str) -> str:
+    """향상된 파일명 추출 - 한글 파일명 처리"""
+    content_disposition = response.headers.get('Content-Disposition', '')
+    
+    # 1. RFC 5987 형식 처리 (filename*=UTF-8''%ED%95%9C%EA%B8%80.pdf)
+    rfc5987_match = re.search(r"filename\*=([^']*)'([^']*)'(.+)", content_disposition)
+    if rfc5987_match:
+        encoding, lang, filename = rfc5987_match.groups()
+        filename = unquote(filename, encoding=encoding or 'utf-8')
+        return os.path.join(save_dir, self.sanitize_filename(filename))
+    
+    # 2. 일반 filename 파라미터 + URL 디코딩
+    filename_match = re.search(r'filename[^;=\n]*=([\'"]*)(.*?)\1', content_disposition)
+    if filename_match:
+        filename = filename_match.group(2)
+        
+        # URL 디코딩 우선 시도
+        try:
+            decoded = unquote(filename, encoding='utf-8')
+            if decoded != filename:  # 실제로 디코딩된 경우
+                return os.path.join(save_dir, self.sanitize_filename(decoded))
+        except:
+            pass
+        
+        # 다중 인코딩 시도: UTF-8 → EUC-KR → CP949
+        for encoding in ['utf-8', 'euc-kr', 'cp949']:
+            try:
+                decoded = filename.encode('latin-1').decode(encoding)
+                if decoded and not decoded.isspace():
+                    clean_filename = self.sanitize_filename(decoded.replace('+', ' '))
+                    return os.path.join(save_dir, clean_filename)
+            except:
+                continue
+```
+
+### 2. 카테고리별 공고 처리
+**특징**: 제목에 카테고리 태그가 포함된 구조
+- **기관공지**: [경기도시장상권진흥원] 태그
+- **유관공고**: [기관명] 태그  
+- **자영업아카데미**: 해당 카테고리
+
+```python
+# 제목 예시
+"기관공지[경기도시장상권진흥원] 「2025년 상반기 경기 살리기 통큰 세일」 주요사항 안내등(수정)"
+"유관공고[경기도] '2025 경기 스타트업 서밋' 전시 참가기업 모집 안내"
+"유관공고[경찰청] 기관사칭 노쇼 사기 특별경보 발령"
+```
+
+### 3. 대용량 파일 처리
+**최대 파일 크기**: 21.7MB (ZIP 압축 파일)
+**평균 파일 크기**: 2.7MB
+**처리 방식**: 스트리밍 다운로드로 메모리 효율성 확보
+
+```python
+def download_file(self, url: str, save_path: str) -> bool:
+    """대용량 파일 스트리밍 다운로드"""
+    response = self.session.get(url, stream=True, verify=self.verify_ssl, timeout=60)
+    
+    with open(save_path, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+    
+    file_size = os.path.getsize(save_path)
+    logger.info(f"다운로드 완료: {save_path} ({file_size:,} bytes)")
+```
+
+## 테스트 결과
+
+### 성공률 분석
+- **총 공고 수**: 36개 (3페이지)
+- **성공적 처리**: 36개 (100%)
+- **원본 URL 포함**: 36개 (100%)
+- **첨부파일 발견**: 49개
+- **한글 파일명**: 49개 (100%)
+- **총 파일 용량**: 126.02 MB
+
+### 파일 다운로드 현황
+**완벽한 다운로드 성공**: 모든 첨부파일이 정상 크기로 다운로드
+
+**파일 형식 분포**:
+- **PDF**: 28개 (57.1%) - 주요 공고문, 안내서
+- **JPG**: 5개 (10.2%) - 포스터, 홍보 이미지
+- **HWPX**: 4개 (8.2%) - 한글 문서 (최신 형식)
+- **PNG**: 4개 (8.2%) - 그래픽 자료
+- **ZIP**: 4개 (8.2%) - 압축 파일
+- **HWP**: 3개 (6.1%) - 한글 문서 (기존 형식)
+- **XLSX**: 1개 (2.0%) - 엑셀 파일
+
+**대용량 파일 처리 성공 사례**:
+- `4. 디지털온누리 안내자료.zip`: 21,774,388 bytes (20.8 MB)
+- `고립은둔청년_포스터_최종.jpg`: 18,663,861 bytes (17.8 MB)
+- `청렴연수원_포스터(교육).jpg`: 7,018,362 bytes (6.7 MB)
+- `붙임2. 2025 경기도형 공예주간(손끝연대) 신청양식 및 사업안내.hwp`: 6,014,464 bytes (5.7 MB)
+
+### 콘텐츠 품질
+- **평균 본문 길이**: 200-600자 (공고 요약 형태)
+- **메타데이터**: 날짜 정보 정상 추출
+- **URL 정확성**: 모든 상세 페이지 URL 정상 작동
+- **이미지 처리**: 본문 내 이미지 절대 URL로 변환
+
+## 특별한 기술적 도전과 해결책
+
+### 1. 간결한 2열 테이블 구조
+**특징**: 제목+날짜만 있는 단순한 구조
+**장점**: 파싱이 안정적이고 빠름
+**처리**: 최소 필드 확인으로 안정성 확보
+
+```python
+for row in tbody.find_all('tr'):
+    cells = row.find_all('td')
+    if len(cells) < 2:  # 제목, 날짜 최소 필요
+        continue
+    
+    title_cell = cells[0]  # 첫 번째 셀: 제목+링크
+    date_cell = cells[1]   # 두 번째 셀: 날짜
+```
+
+### 2. 표준 GET 페이지네이션
+**특징**: 가장 단순하고 안정적인 페이지네이션
+**장점**: 테스트와 디버깅이 용이
+**구현**: URL 파라미터만 변경
+
+```python
+# 페이지 1: https://gmr.or.kr/base/board/list?boardManagementNo=1&menuLevel=2&menuNo=14
+# 페이지 2: https://gmr.or.kr/base/board/list?boardManagementNo=1&page=2&menuLevel=2&menuNo=14
+# 페이지 3: https://gmr.or.kr/base/board/list?boardManagementNo=1&page=3&menuLevel=2&menuNo=14
+```
+
+### 3. 완벽한 UTF-8 환경
+**특징**: 서버부터 클라이언트까지 일관된 UTF-8 처리
+**결과**: 한글 파일명 처리에서 전혀 문제없음
+**의미**: 최신 웹 표준을 잘 준수하는 사이트
+
+### 4. 다양한 파일 형식 지원
+**현대적 특징**: HWPX (한글 2014+), PNG, JPG 등 최신 형식
+**호환성**: 기존 HWP, PDF 등 전통적 형식도 지원
+**용량**: 소형 문서부터 20MB+ 대용량 파일까지 처리
+
+## 재사용 가능한 패턴
+
+### 1. 단순 GET 페이지네이션 사이트 패턴
+```python
+class SimpleGetPaginationScraper(StandardTableScraper):
+    """GET 파라미터 기반 페이지네이션 공통 패턴"""
+    
+    def get_list_url(self, page_num: int) -> str:
+        if page_num == 1:
+            return self.list_url
+        else:
+            return f"{self.list_url}&page={page_num}"
+    
+    def parse_list_page(self, html_content: str) -> list:
+        # 간단한 테이블 구조 파싱
+        table = soup.find('table')
+        for row in table.find_all('tr'):
+            cells = row.find_all('td')
+            # 최소 필드 확인 후 처리
+```
+
+### 2. UTF-8 완벽 지원 사이트 패턴
+```python
+def download_modern_utf8_file(self, url: str, save_path: str) -> bool:
+    """최신 UTF-8 사이트의 파일 다운로드"""
+    response = self.session.get(url, stream=True)
+    
+    # 1. URL 디코딩 우선 시도 (최신 표준)
+    # 2. RFC 5987 형식 처리
+    # 3. UTF-8 직접 디코딩
+    # 4. 스트리밍 다운로드
+```
+
+### 3. 카테고리 태그 포함 제목 처리
+```python
+def extract_category_and_title(self, full_title: str) -> dict:
+    """[카테고리] 제목 형식 파싱"""
+    match = re.match(r'^([^[]*)\[([^\]]+)\]\s*(.+)$', full_title)
+    if match:
+        prefix, category, title = match.groups()
+        return {
+            'prefix': prefix.strip(),
+            'category': category.strip(), 
+            'title': title.strip(),
+            'full_title': full_title
+        }
+    else:
+        return {'title': full_title, 'full_title': full_title}
+```
+
+## 적용 가능한 유사 사이트
+
+1. **지방자치단체 공고 사이트**: GET 페이지네이션 + UTF-8 환경
+2. **공공기관 알림 게시판**: 간단한 테이블 구조 + 카테고리 태그
+3. **상공회의소/진흥원**: 시장상권 관련 정보 제공 사이트
+4. **최신 JSP 기반 정부 사이트**: UTF-8 + 표준 HTML 구조
+
+## 성능 및 안정성
+
+### 요청 처리
+- **페이지당 처리 시간**: 약 8-12초 (첨부파일 다운로드 포함)
+- **안정성**: 100% 성공률 달성
+- **네트워크 효율성**: Keep-Alive 연결로 최적화
+
+### 메모리 효율성
+- **대용량 파일**: 스트리밍 다운로드로 메모리 절약
+- **이미지 처리**: 본문 내 이미지 URL만 변환, 별도 다운로드 없음
+- **세션 관리**: 단일 세션으로 모든 요청 처리
+
+### 에러 처리
+- **네트워크 타임아웃**: 60초 설정 (대용량 파일 고려)
+- **파일명 처리**: 다단계 fallback으로 100% 처리 성공
+- **인코딩 문제**: 다중 인코딩 시도로 안정성 확보
+
+## 개발 인사이트
+
+### 1. 최신 웹 표준의 장점
+- UTF-8 완벽 지원으로 한글 처리 문제 전무
+- 표준 HTTP 헤더로 파일명 처리 간단
+- RESTful URL 구조로 페이지네이션 직관적
+
+### 2. 정부기관 사이트의 진화
+- 기존 POST 기반에서 GET 기반으로 단순화
+- JavaScript 의존성 최소화
+- 모바일 친화적 반응형 디자인
+
+### 3. 파일 다운로드 패턴 발전
+- 복잡한 JavaScript 함수 대신 직접 링크
+- Base64 인코딩 없이 URL 인코딩만 사용
+- Content-Disposition 헤더 표준 준수
+
+### 4. Enhanced 아키텍처 활용도
+- **세션 관리**: 단순한 쿠키 기반 세션
+- **중복 검사**: 36개 공고 모두 신규 확인
+- **로깅 시스템**: 상세한 진행 상황 추적
+- **Fallback 메커니즘**: 본문 추출에서 다단계 시도
+
+## 결론
+
+gmr.or.kr Enhanced 스크래퍼는 최신 웹 표준을 준수하는 사이트의 모범 사례로:
+
+✅ **완벽한 UTF-8 지원**: 한글 파일명 처리 100% 성공  
+✅ **단순한 페이지네이션**: GET 파라미터로 안정적 구현  
+✅ **표준 HTML 구조**: 파싱 로직이 간결하고 안정적  
+✅ **대용량 파일 처리**: 20MB+ 파일까지 완벽 다운로드  
+✅ **다양한 파일 형식**: PDF, HWP, HWPX, 이미지, 압축파일 지원  
+✅ **Enhanced 아키텍처**: 모든 고급 기능 완전 활용
+
+특히 **한글 파일명 처리와 대용량 파일 다운로드**에서 완벽한 성능을 보여주며, 최신 정부기관 사이트 스크래핑의 표준 패턴을 제시하는 고품질 스크래퍼임.
+
+### 향후 활용 방향
+1. **지방자치단체 사이트**: 유사한 GET 페이지네이션 구조
+2. **공공기관 알림 시스템**: 카테고리 태그 처리 패턴 재사용
+3. **상권 진흥 관련 기관**: 도메인 특화 정보 수집
+4. **최신 웹 표준 사이트**: UTF-8 완벽 지원 환경 활용
+
+GMR 스크래퍼는 기술적 복잡성은 낮지만 실용성과 안정성이 매우 높은 모델로, 향후 유사 사이트 개발 시 기준점이 될 수 있는 완성도 높은 구현임.

@@ -1,0 +1,197 @@
+# CBF (춘천바이오산업진흥원) 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+
+### 기본 정보
+- **URL**: http://www.cbf.or.kr/twb_bbs/bbs_list.php?bcd=01_05_01_00_00
+- **사이트명**: 춘천바이오산업진흥원 공지사항
+- **프로토콜**: HTTP (SSL 없음)
+- **인코딩**: UTF-8
+- **게시판 형태**: PHP 기반 표준 HTML 테이블
+
+### 구조적 특징
+- **페이지네이션**: GET 파라미터 기반 (`pg=2`, `pg=3`)
+- **테이블 구조**: `.table_basic` 클래스 사용
+- **칼럼 구성**: 번호, 제목, 글쓴이, 파일, 날짜, 조회수 (6칼럼)
+- **첨부파일**: JavaScript 함수 기반 다운로드 (`opendownload()`)
+
+## 기술적 구현 특징
+
+### 1. 페이지네이션 처리
+```python
+def get_list_url(self, page_num: int) -> str:
+    if page_num == 1:
+        return self.list_url
+    else:
+        return f"{self.list_url}&pg={page_num}"
+```
+
+### 2. 테이블 파싱
+```python
+# CBF의 게시판 테이블 찾기
+table = soup.find('table', class_='table_basic')
+tbody = table.find('tbody')
+
+for row in tbody.find_all('tr'):
+    cells = row.find_all('td')
+    if len(cells) < 6:  # 번호, 제목, 글쓴이, 파일, 날짜, 조회수
+        continue
+```
+
+### 3. JavaScript 기반 첨부파일 다운로드
+CBF는 특별한 JavaScript 다운로드 시스템을 사용합니다:
+
+```javascript
+function opendownload(boardcode, boardnumber, num){
+    var url="bbs_download.php?bcd=" + boardcode + "&bn=" + boardnumber + "&num=" + num ;
+    document.location.href = url;
+}
+```
+
+이를 파싱하여 실제 다운로드 URL을 구성:
+
+```python
+def _extract_attachments(self, soup: BeautifulSoup, url: str = None) -> list:
+    # JavaScript 다운로드 링크 찾기: opendownload('01_05_01_00_00', 4732, 0)
+    download_links = file_wrap.find_all('a', href=True)
+    
+    for link in download_links:
+        href = link.get('href', '')
+        if 'opendownload' in href:
+            # JavaScript 함수에서 파라미터 추출
+            match = re.search(r"opendownload\('([^']+)',\s*(\d+),\s*(\d+)\)", href)
+            if match:
+                bcd = match.group(1)
+                bn = match.group(2) 
+                num = match.group(3)
+                
+                # 다운로드 URL 구성
+                download_url = f"{self.base_url}/twb_bbs/bbs_download.php?bcd={bcd}&bn={bn}&num={num}"
+```
+
+### 4. HTTP 사이트 처리
+```python
+def __init__(self):
+    # CBF는 HTTP 사이트이므로 SSL 검증 비활성화
+    self.verify_ssl = False
+    self.base_url = "http://www.cbf.or.kr"
+```
+
+## 주요 해결책
+
+### 1. 다양한 첨부파일 형식 지원
+CBF는 PDF, HWP, XLSX, PNG, JPG 등 다양한 형식을 지원합니다:
+- PDF: 공고문, 안내문서
+- HWP: 신청서, 양식
+- XLSX: 엑셀 템플릿
+- PNG/JPG: 포스터, 이미지
+
+### 2. 한글 파일명 완벽 처리
+Enhanced 스크래퍼의 다단계 인코딩 처리로 한글 파일명을 완벽하게 지원:
+
+```
+2025 강원바이오 엑스포 & 수출상담회 참가신청서 양식.hwp
+붙임1. [공고] 2025년 강원바이오기업 제품화 연구개발 지원기업 모집 연장 공고.pdf
+바이오산업진흥식단표(6-4주차).png
+```
+
+### 3. 본문 추출 다단계 시도
+```python
+def _extract_content(self, soup: BeautifulSoup) -> str:
+    content_selectors = [
+        '.context',
+        '.content', 
+        '.board_content',
+        '#board_content',
+        '.view_content'
+    ]
+    
+    # 대안: 첨부파일 영역 이후의 context div 찾기
+    if not content_area:
+        file_wrap = soup.find('div', class_='file_wrap')
+        if file_wrap:
+            context_div = file_wrap.find_next_sibling('div', class_='context')
+```
+
+## 테스트 결과
+
+### 성능 지표
+- **총 공고 수**: 18개 (2페이지에서 중복 감지로 조기 종료)
+- **총 첨부파일**: 26개
+- **한글 파일명**: 26개 (100%)
+- **성공률**: 100% (18/18)
+- **총 파일 용량**: 7,374,124 bytes (약 7.3MB)
+
+### 파일 형식별 분포
+```
+PDF: 공고문, 안내문서
+HWP: 신청서, 양식문서  
+PNG: 식단표, 포스터
+JPG: 홍보 이미지
+XLSX: 엑셀 템플릿
+```
+
+### 중복 체크 시스템 동작
+2페이지에서 연속 3개 중복 감지로 자동 조기 종료:
+```
+2025-06-20 14:15:04,476 - 연속 중복 공고 3개 발견 - 조기 종료 신호
+2025-06-20 14:15:04,476 - 중복 공고 3개 연속 발견으로 조기 종료
+```
+
+## 재사용 가능한 패턴
+
+### 1. PHP 기반 게시판 패턴
+CBF 스크래퍼는 다음과 같은 PHP 기반 사이트에 재사용 가능:
+- GET 파라미터 페이지네이션 (`pg=N`)
+- `.table_basic` 클래스 테이블
+- JavaScript `opendownload()` 함수
+- 6칼럼 표준 구조
+
+### 2. HTTP 사이트 처리 패턴
+```python
+self.verify_ssl = False
+self.base_url = "http://..."
+```
+
+### 3. JavaScript 파일 다운로드 패턴
+정규표현식을 사용한 JavaScript 함수 파라미터 추출:
+```python
+match = re.search(r"opendownload\('([^']+)',\s*(\d+),\s*(\d+)\)", href)
+```
+
+## 특별한 기술적 도전과 해결책
+
+### 1. 대용량 본문 처리
+일부 공고의 본문이 매우 큰 이미지를 포함하여 600KB를 초과:
+```
+내용길이: 638600 (약 623KB)
+내용길이: 931311 (약 910KB)
+```
+
+Enhanced 스크래퍼는 이런 대용량 본문도 안정적으로 처리합니다.
+
+### 2. 다양한 첨부파일 확장자
+CBF는 일반적이지 않은 파일 형식도 지원:
+- `.png`: 식단표 이미지
+- `.jpg`: 포스터, 홍보 이미지  
+- `.xlsx`: 엑셀 템플릿
+
+### 3. 긴 파일명 처리
+일부 파일명이 매우 길어 파일시스템 제한을 고려해야 함:
+```
+2025 강원바이오 엑스포 해외바이어 초청 수출상담회 제품소개서(수출상담회 기업만)_기업명.xlsx
+2025 강원콘텐츠코리아랩 국내 전시회 공동관 참가 지원 사업 모집 공고 및 붙임문서(250530).pdf
+```
+
+Enhanced 스크래퍼의 `sanitize_filename()` 함수가 이를 안전하게 처리합니다.
+
+## 결론
+
+CBF 스크래퍼는 다음과 같은 특징을 보여주는 성공적인 구현입니다:
+
+1. **완벽한 첨부파일 처리**: JavaScript 기반 다운로드 시스템 완전 해결
+2. **한글 지원**: 모든 첨부파일의 한글 파일명 완벽 처리
+3. **안정성**: 100% 성공률과 조기 종료 시스템
+4. **확장성**: PHP 기반 게시판 사이트에 재사용 가능한 패턴
+
+이 구현은 HTTP 기반 PHP 게시판 사이트의 모범 사례로 활용할 수 있으며, 특히 JavaScript 기반 파일 다운로드 시스템을 가진 사이트에 유용한 참조 모델입니다.

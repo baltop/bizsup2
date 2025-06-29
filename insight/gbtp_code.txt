@@ -1,0 +1,259 @@
+# 경북테크노파크(GBTP) Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+
+### 1. 기본 정보
+- **사이트명**: 경북테크노파크
+- **URL**: https://www.gbtp.or.kr/user/board.do?bbsId=BBSMSTR_000000000021
+- **사이트 유형**: JavaScript 기반 동적 게시판
+- **인코딩**: UTF-8
+- **SSL**: HTTPS
+
+### 2. 페이지 구조
+- **목록 페이지**: 표준 테이블 구조이지만 JavaScript 의존성 높음
+- **페이지네이션**: GET 파라미터 방식 (`?pageIndex=N`)
+- **상세 페이지**: JavaScript 기반 접근, 직접 URL 구성 어려움
+
+### 3. 데이터 구조
+#### 목록 페이지 테이블 컬럼:
+1. 번호
+2. 공고명 (JavaScript 링크)
+3. 공고일
+4. 접수기간
+5. 접수상태
+
+#### 상세 페이지:
+- JavaScript로 동적 로드
+- 테이블 기반 레이아웃
+- 첨부파일 JavaScript 함수 의존
+
+## 기술적 구현 특징
+
+### 1. JavaScript 처리 문제
+```python
+# 모든 링크가 javascript:void(0) 형태
+<a href="javascript:void(0);" onclick="fn_egov_select_bbs('12345')">공고제목</a>
+
+# URL 추출 패턴 매칭 필요
+patterns = [
+    r"javascript:fn_egov_select_bbs\('(\d+)'\)",
+    r"javascript:view\('(\d+)'\)",
+    r"javascript:goDetail\('(\d+)'\)",
+]
+```
+
+### 2. 페이지네이션
+```python
+def get_list_url(self, page_num: int) -> str:
+    if page_num == 1:
+        return self.list_url
+    else:
+        return f"{self.list_url}&pageIndex={page_num}"
+```
+
+### 3. 상세 URL 추론
+```python
+def _extract_detail_url(self, onclick: str, title: str, row_data: dict = None) -> str:
+    # JavaScript 패턴에서 파라미터 추출
+    for pattern in patterns:
+        match = re.search(pattern, onclick)
+        if match:
+            param = match.group(1)
+            detail_url = f"{self.base_url}/user/boardDetail.do?bbsId=BBSMSTR_000000000021&nttId={param}"
+            return detail_url
+```
+
+## 주요 기술적 해결책
+
+### 1. JavaScript 링크 처리
+- **문제**: 모든 상세 페이지 링크가 `javascript:void(0)`
+- **해결**: onclick 속성에서 정규표현식으로 파라미터 추출
+- **패턴**: `fn_egov_select_bbs('12345')` → `nttId=12345`
+
+### 2. 본문 추출 다단계 시도
+```python
+def _extract_content(self, soup: BeautifulSoup) -> str:
+    # 1. 테이블에서 "내용" 행 찾기
+    # 2. figure 태그 찾기
+    # 3. 긴 텍스트가 있는 셀 찾기
+    # 4. 전체 페이지에서 본문 영역 찾기
+```
+
+### 3. 첨부파일 JavaScript 패턴
+```python
+# 다양한 JavaScript 다운로드 패턴 지원
+patterns = [
+    r"fn_egov_downFile\('([^']+)',\s*'([^']+)'\)",
+    r"downloadFile\('([^']+)',\s*'([^']+)'\)",
+    r"fileDown\('([^']+)',\s*'([^']+)'\)",
+]
+```
+
+## 성능 및 결과
+
+### 1. 테스트 결과 (3페이지)
+- **총 공고 수**: 30개
+- **성공적 처리**: 5개 (16.7%)
+- **첨부파일**: 0개 (JavaScript 제약)
+- **주요 제약**: JavaScript 의존성으로 인한 제한적 접근
+
+### 2. 제약 사항
+- **상세 페이지 접근**: JavaScript 실행 없이는 완전한 접근 어려움
+- **첨부파일 다운로드**: JavaScript 함수 의존으로 직접 다운로드 불가
+- **동적 콘텐츠**: 일부 내용이 AJAX로 로드되어 정적 파싱 한계
+
+### 3. 부분적 성공 요인
+- **목록 파싱**: 표준 테이블 구조로 목록은 정상 추출
+- **기본 정보**: 제목, 날짜, 상태 등 메타데이터 수집 가능
+- **URL 추론**: 패턴 매칭으로 상세 페이지 URL 생성 성공
+
+## JavaScript 사이트 대응 패턴
+
+### 1. 단계적 접근법
+```python
+# 1단계: 정적 HTML 파싱 시도
+announcements = self.parse_list_page(html_content)
+
+# 2단계: JavaScript 패턴 분석
+detail_url = self._extract_detail_url(onclick, title)
+
+# 3단계: URL 추론 및 검증
+if not detail_url:
+    detail_url = self._generate_fallback_url(row_data)
+```
+
+### 2. 패턴 매칭 최적화
+```python
+# 포괄적 패턴 정의
+javascript_patterns = [
+    r"fn_egov_select_bbs\('(\d+)'\)",  # 전자정부 표준
+    r"view\('(\d+)'\)",                # 일반적 패턴
+    r"detail\('(\d+)'\)",              # 상세보기 패턴
+    r"boardDetail\('([^']+)'\)",       # 게시판 상세
+]
+```
+
+### 3. 콘텐츠 추출 전략
+```python
+# 다중 선택자 시도
+content_selectors = [
+    'div.content',
+    'div.board-content', 
+    'div.view-content',
+    'td[colspan]',  # 테이블 기반 본문
+    'tr td:last-child'  # 마지막 셀 (본문 가능성)
+]
+```
+
+## 재사용 가능한 패턴
+
+### 1. JavaScript 사이트 감지
+```python
+def is_javascript_heavy(self, soup):
+    """JavaScript 의존성이 높은 사이트인지 확인"""
+    js_links = soup.find_all('a', href=re.compile(r'javascript:'))
+    total_links = len(soup.find_all('a'))
+    return len(js_links) / total_links > 0.8 if total_links > 0 else False
+```
+
+### 2. 전자정부 프레임워크 패턴
+```python
+# 전자정부 표준 프레임워크 패턴
+egov_patterns = {
+    'list_function': r"fn_egov_select_bbs\('(\d+)'\)",
+    'detail_url': "/user/boardDetail.do?bbsId={bbsId}&nttId={nttId}",
+    'download_function': r"fn_egov_downFile\('([^']+)',\s*'([^']+)'\)",
+    'download_url': "/user/downloadFile.do?atchFileId={fileId}&fileSn={fileSn}"
+}
+```
+
+### 3. 폴백 메커니즘
+```python
+def extract_with_fallback(self, soup, selectors):
+    """다단계 폴백으로 콘텐츠 추출"""
+    for selector in selectors:
+        try:
+            element = soup.select_one(selector)
+            if element and element.get_text(strip=True):
+                return element
+        except:
+            continue
+    return None
+```
+
+## 향후 개선 방향
+
+### 1. Playwright 통합
+```python
+# JavaScript 실행 환경 제공
+from playwright.sync_api import sync_playwright
+
+def extract_with_browser(self, url):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(url)
+        content = page.content()
+        browser.close()
+        return content
+```
+
+### 2. API 엔드포인트 탐지
+```python
+# AJAX 요청 패턴 분석
+def detect_api_endpoints(self, html_content):
+    """JavaScript 코드에서 API 엔드포인트 추출"""
+    api_patterns = [
+        r'ajax\s*\(\s*[\'"]([^\'"]+)[\'"]',
+        r'fetch\s*\(\s*[\'"]([^\'"]+)[\'"]',
+        r'\.load\s*\(\s*[\'"]([^\'"]+)[\'"]'
+    ]
+```
+
+### 3. 하이브리드 접근법
+```python
+def hybrid_scraping(self, url):
+    """정적 + 동적 스크래핑 결합"""
+    # 1. 정적 파싱으로 기본 정보 수집
+    static_data = self.static_parse(url)
+    
+    # 2. 필요시 브라우저 자동화로 동적 콘텐츠 수집
+    if self.needs_dynamic_parsing(static_data):
+        dynamic_data = self.browser_parse(url)
+        return self.merge_data(static_data, dynamic_data)
+    
+    return static_data
+```
+
+## 사이트별 권장사항
+
+### 1. 유사한 사이트
+- **전자정부 프레임워크 사이트**: 동일 패턴 적용 가능
+- **지자체/공공기관 사이트**: 대부분 유사한 JavaScript 패턴
+- **eGovFrame 기반 사이트**: 표준 함수명 패턴 재사용
+
+### 2. 설정 최적화
+```python
+# JavaScript 사이트 전용 설정
+self.javascript_heavy = True
+self.browser_fallback = True  # 필요시 브라우저 사용
+self.pattern_based_parsing = True
+self.timeout = 60  # JavaScript 로딩 대기시간 증가
+```
+
+### 3. 모니터링 포인트
+- **패턴 매칭 실패율**: JavaScript 함수명 변경 감지
+- **상세 페이지 접근 실패**: URL 추론 정확도
+- **빈 콘텐츠 비율**: 동적 로딩 콘텐츠 누락
+
+## 결론
+
+경북테크노파크(GBTP) 사이트는 전형적인 JavaScript 기반 동적 사이트로, 전자정부 표준 프레임워크를 사용합니다. Enhanced 스크래퍼로 부분적 성공을 달성했으나, 완전한 스크래핑을 위해서는 브라우저 자동화가 필요합니다.
+
+주요 특징:
+1. **JavaScript 의존성**: 모든 링크와 기능이 JavaScript 기반
+2. **패턴 기반 접근**: 정규표현식으로 URL 추출 가능
+3. **전자정부 표준**: eGovFrame 패턴 활용
+4. **제한적 정적 파싱**: 목록 정보는 추출 가능, 상세 콘텐츠는 제한적
+
+이 경험은 유사한 정부기관/공공기관의 JavaScript 기반 사이트 스크래핑에 중요한 참고 자료가 됩니다. 특히 전자정부 프레임워크의 표준 패턴을 이해하는데 도움이 됩니다.

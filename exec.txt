@@ -1,0 +1,7 @@
+python -c "
+from enhanced_kidp_scraper import EnhancedKIDPScraper
+import logging
+logging.basicConfig(level=logging.INFO)
+scraper = EnhancedKIDPScraper()
+scraper.scrape_pages(max_pages=3, output_base='output/kidp')
+"

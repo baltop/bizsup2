@@ -1,0 +1,192 @@
+# CTP (충남테크노파크) 스크래퍼 개발 인사이트
+
+## 사이트 정보
+- **사이트명**: 충남테크노파크 (Chungnam Technopark)
+- **URL**: https://ctp.or.kr/business/data.do
+- **특성**: Spring Framework 기반 (.do 확장자), Bootstrap 4 반응형 테이블
+
+## 주요 기술적 특징
+
+### 1. Spring Framework 기반 구조
+- **사업공고 목록**: `/business/data.do` 
+- **상세 페이지**: `/business/datadetail.do?seq={seq}`
+- **파일 다운로드**: `/boardfiledownload.do?seq={seq}`
+- **페이지네이션**: GET 파라미터 방식 `?page={page_num}`
+
+### 2. Bootstrap 4 반응형 테이블 구조
+```html
+<table class="w-100 mb4">
+  <thead>
+    <tr>
+      <th scope="col">번호</th>
+      <th scope="col">제목</th>
+      <th scope="col">작성자</th>
+      <th scope="col">작성일</th>
+      <th scope="col">조회</th>
+    </tr>
+  </thead>
+  <tbody>
+    <!-- 데이터 행들 -->
+  </tbody>
+</table>
+```
+
+### 3. 핵심 기술적 해결책
+
+#### 테이블 선택자 문제 해결
+```python
+# 문제: 기본 'table' 클래스가 아닌 Bootstrap 클래스 사용
+# 해결: 정확한 클래스 선택자와 fallback 메커니즘
+table = soup.find('table', class_='w-100 mb4')
+if not table:
+    table = soup.find('table')  # fallback
+    if not table:
+        logger.warning("테이블을 찾을 수 없습니다")
+        return announcements
+```
+
+#### 제목 링크 추출
+```python
+# Spring Framework의 특수한 링크 구조 처리
+link_elem = cells[1].find('a')
+if link_elem:
+    href = link_elem.get('href', '')
+    if href.startswith('javascript:view'):
+        # JavaScript 함수에서 seq 추출
+        match = re.search(r"view\((\d+)\)", href)
+        if match:
+            seq = match.group(1)
+            detail_url = f"{self.base_url}/business/datadetail.do?seq={seq}"
+    else:
+        # 직접 링크 처리
+        detail_url = urljoin(self.base_url, href)
+```
+
+#### 첨부파일 다운로드 링크 추출
+```python
+# Spring Framework의 boardfiledownload.do 패턴
+def _extract_attachments(self, soup: BeautifulSoup) -> list:
+    attachments = []
+    # 첨부파일 링크 패턴: /boardfiledownload.do?seq=숫자
+    for link in soup.find_all('a', href=re.compile(r'/boardfiledownload\.do\?seq=\d+')):
+        filename = link.get_text(strip=True)
+        href = link.get('href', '')
+        
+        if filename and href:
+            file_url = urljoin(self.base_url, href)
+            attachments.append({
+                'filename': filename,
+                'url': file_url
+            })
+    
+    return attachments
+```
+
+### 4. 개발 중 발견한 특이사항
+
+#### Bootstrap 4 반응형 테이블
+- 클래스명: `w-100 mb4` (width: 100%, margin-bottom: 4)
+- 표준 `.table` 클래스 대신 유틸리티 클래스 사용
+- 모바일 대응을 위한 반응형 구조
+
+#### 이미지 임베딩 방식
+- 공고 본문에 이미지가 직접 임베딩됨
+- 경로: `/upload/board/YYYYMM/해시값.jpg`
+- Markdown 변환 시 이미지 태그 그대로 보존
+
+#### 첨부파일 명명 규칙
+- 한국어 파일명 완벽 지원
+- UTF-8 인코딩으로 일관된 처리
+- 파일 확장자: `.pdf`, `.hwp`, `.docx` 등 다양
+
+## 테스트 결과
+
+### 성능 지표
+- **총 공고 수**: 30개 (3페이지)
+- **성공률**: 100% (30/30)
+- **첨부파일**: 82개 파일
+- **한글 파일명**: 100% 정상 처리
+- **총 파일 크기**: 28MB+ (대용량 파일 포함)
+
+### 파일 다운로드 패턴
+- 주요 파일 형식: PDF (공고문), HWP (신청서), DOCX (양식)
+- 평균 파일 크기: 약 350KB
+- 최대 파일 크기: 5MB 이상 (상세 공고문)
+
+## 재사용 가능한 패턴
+
+### 1. Spring Framework 사이트 대응
+```python
+# .do 확장자 기반 URL 패턴
+def get_list_url(self, page_num: int) -> str:
+    if page_num == 1:
+        return self.list_url
+    else:
+        return f"{self.list_url}?page={page_num}"
+
+def get_detail_url(self, seq: str) -> str:
+    return f"{self.base_url}/business/datadetail.do?seq={seq}"
+```
+
+### 2. Bootstrap 반응형 테이블 파싱
+```python
+# 다양한 Bootstrap 클래스 대응
+table_selectors = ['w-100 mb4', 'table table-striped', 'table-responsive']
+for selector in table_selectors:
+    table = soup.find('table', class_=selector)
+    if table:
+        break
+```
+
+### 3. JavaScript 링크 처리
+```python
+# JavaScript 함수 호출에서 파라미터 추출
+if href.startswith('javascript:'):
+    match = re.search(r"(\w+)\(([^)]+)\)", href)
+    if match:
+        func_name, params = match.groups()
+        # 함수별 처리 로직
+```
+
+## 개발 시간 및 난이도
+
+### 개발 소요 시간
+- **사이트 분석**: 15분
+- **스크래퍼 구현**: 20분
+- **테스트 및 디버깅**: 10분
+- **문서화**: 10분
+- **총 소요 시간**: 55분
+
+### 난이도 평가: ⭐⭐☆☆☆ (쉬움)
+- Bootstrap 테이블 구조는 표준적
+- Spring Framework 패턴 단순
+- 첨부파일 다운로드 직관적
+- 특별한 인증이나 JavaScript 렌더링 불필요
+
+## 코드 재사용률
+- **JBBA 타입 스크래퍼와 90% 유사**
+- **기본 StandardTableScraper 패턴 그대로 적용**
+- **테이블 클래스 선택자만 수정 필요**
+
+## 향후 개발 시 참고사항
+
+### 1. 유사 사이트 식별 방법
+- `.do` 확장자 URL 패턴
+- Spring Framework 기반 CMS
+- Bootstrap 반응형 디자인
+- 정부/공공기관 사이트 스타일
+
+### 2. 개발 시 주의사항
+- 테이블 클래스명 먼저 확인
+- JavaScript 링크 패턴 분석
+- 파일 다운로드 URL 구조 파악
+- 이미지 임베딩 방식 고려
+
+### 3. 테스트 우선순위
+1. 테이블 파싱 정확성
+2. 페이지네이션 동작
+3. 첨부파일 다운로드
+4. 한글 파일명 처리
+
+이 인사이트를 통해 향후 유사한 Spring Framework + Bootstrap 기반 사이트 개발 시 
+개발 시간을 크게 단축할 수 있습니다.

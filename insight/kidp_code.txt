@@ -1,0 +1,312 @@
+# KIDP (한국디자인진흥원) 스크래퍼 개발 로그 및 기술 문서
+
+## 프로젝트 개요
+- **사이트명**: 한국디자인진흥원 (KIDP - Korea Institute of Design Promotion)
+- **기본 URL**: https://kidp.or.kr
+- **목표**: 지원사업 공고 및 첨부파일 자동 수집
+
+## 개발 히스토리
+
+### Phase 1: 기본 스크래퍼 구현 (kidp_scraper.py)
+**날짜**: 2024년 초기 개발
+**주요 특징**:
+- BaseScraper 기반 구현
+- JavaScript onclick 이벤트 처리
+- 복잡한 URL 패턴 분석 및 처리
+
+**핵심 발견사항**:
+1. **특수한 URL 구조**: KIDP는 단순한 게시판이 아닌 복잡한 파라미터 구조 사용
+   - `menuno=1202`: 메뉴 번호
+   - `bbsno={seq}`: 게시글 번호
+   - `siteno=16`: 사이트 번호
+   - `act=view/down`: 액션 타입
+   - `ztag`: Base64 인코딩된 특수 파라미터
+
+2. **JavaScript 의존성**: 
+   - 모든 링크가 `submitForm(this,'view',seq)` 형태의 JavaScript 함수 호출
+   - 직접적인 href 링크 없음
+
+3. **파일 다운로드 구조**:
+   - 파일도 동일한 submitForm 패턴 사용: `submitForm(this,'down',file_id)`
+   - 테이블 구조에서 "첨부파일" 텍스트로 영역 식별
+
+### Phase 2: Enhanced 아키텍처 적용 (enhanced_kidp_scraper.py)
+**날짜**: 2025년 6월
+**개선사항**:
+- JavaScriptScraper 기반으로 변경
+- 중복 체크 및 조기 종료 기능 추가
+- 향상된 로깅 및 에러 처리
+- 설정 주입 지원
+
+## 기술적 세부사항
+
+### 1. 사이트 구조 분석
+
+#### 목록 페이지 구조:
+- **URL 패턴**: `https://kidp.or.kr/?menuno=1202&mode=list&page={page_num}`
+- **페이지네이션**: GET 파라미터 방식 (`page=2, 3, 4...`)
+- **테이블 구조**: `<table class="board01-list">` 또는 summary 속성 포함 테이블
+
+#### 상세 페이지 구조:
+- **URL 템플릿**: 
+  ```
+  https://kidp.or.kr/?menuno=1202&bbsno={seq}&siteno=16&act=view&ztag=rO0ABXQAMzxjYWxsIHR5cGU9ImJvYXJkIiBubz0iNjIyIiBza2luPSJraWRwX2JicyI%2BPC9jYWxsPg%3D%3D
+  ```
+- **본문 영역**: 다양한 선택자 시도 필요 (div.board_view, div.view_content 등)
+- **첨부파일**: 테이블 행에서 "첨부파일" 텍스트 검색
+
+### 2. JavaScript 처리 패턴
+
+#### onclick 이벤트 분석:
+```javascript
+// 상세보기: submitForm(this,'view',64274)
+// 파일다운로드: submitForm(this,'down',64274,'')
+```
+
+#### 정규표현식 패턴:
+```python
+seq_match = re.search(r"submitForm\(this,'(\w+)',(\d+)\)", onclick)
+# Group 1: action (view/down)
+# Group 2: seq/file_id
+```
+
+### 3. 파일 다운로드 메커니즘
+
+#### 다운로드 URL 구성:
+```python
+file_url = f"{self.base_url}/?menuno=1202&bbsno={file_id}&siteno=16&act=down&ztag=rO0ABXQAMzxjYWxsIHR5cGU9ImJvYXJkIiBubz0iNjIyIiBza2luPSJraWRwX2JicyI%2BPC9jYWxsPg%3D%3D"
+```
+
+#### Content-Disposition 처리:
+- KIDP는 표준 HTTP 헤더로 파일명 전달
+- 한글 파일명 인코딩 처리 필요
+- 파일명 정리: `(1)` 등 숫자 제거
+
+### 4. 인코딩 및 문자 처리
+
+#### 발견된 인코딩 이슈:
+1. **URL 파라미터**: ztag는 Base64 인코딩된 XML 구조
+2. **파일명**: EUC-KR 또는 UTF-8 혼재
+3. **HTML 인코딩**: 대부분 UTF-8
+
+#### 해결 방법:
+```python
+# 파일명 정리
+file_name = re.sub(r'\s*\(\d+\)\s*$', '', file_name)
+file_name = file_name.replace('+', ' ')
+```
+
+## 개발 인사이트 및 교훈
+
+### 1. JavaScript 렌더링 vs 정적 파싱
+**발견**: KIDP는 JavaScript가 필수이지만 실제로는 정적 HTML 파싱으로 충분
+**이유**: onclick 이벤트의 파라미터만 추출하면 URL 재구성 가능
+
+**교훈**: 
+- 모든 JavaScript 사이트가 브라우저 자동화를 필요로 하지 않음
+- 정규표현식으로 JavaScript 함수 파라미터 추출이 효과적인 경우가 많음
+
+### 2. 복잡한 URL 패턴 처리
+**발견**: KIDP의 ztag 파라미터는 고정값
+**분석**: 
+```
+ztag=rO0ABXQAMzxjYWxsIHR5cGU9ImJvYXJkIiBubz0iNjIyIiBza2luPSJraWRwX2JicyI%2BPC9jYWxsPg%3D%3D
+```
+Base64 디코딩하면: `<call type="board" no="622" skin="kidp_bbs"></call>`
+
+**교훈**:
+- 복잡해 보이는 파라미터도 고정값인 경우가 많음
+- Base64 디코딩해서 구조 파악하면 이해도 향상
+
+### 3. 테이블 구조 파싱의 견고성
+**도전과제**: KIDP는 여러 테이블 구조 혼재
+**해결방법**:
+1. 클래스명 우선 검색
+2. summary 속성 확인
+3. tbody 존재 여부로 필터링
+4. 행 개수로 유효성 검증
+
+```python
+# 우선순위 기반 테이블 찾기
+table = (soup.find('table', class_='board01-list') or 
+         soup.find('table', attrs={'summary': lambda x: x and '번호' in x}))
+
+if not table:
+    # 모든 테이블을 확인하여 tbody가 있는 것 찾기
+    tables = soup.find_all('table')
+    for t in tables:
+        if t.find('tbody') and len(t.find('tbody').find_all('tr')) > 0:
+            table = t
+            break
+```
+
+### 4. 첨부파일 검색 전략
+**KIDP 특성**: 테이블 기반 첨부파일 표시
+**검색 전략**:
+1. "첨부파일" 텍스트가 있는 `<th>` 찾기
+2. 해당 행의 `<td>`에서 링크 추출
+3. onclick 이벤트에서 파일 ID 추출
+4. 대체 패턴으로 직접 파일 링크 검색
+
+### 5. 에러 처리 및 복원력
+**구현된 방어 기제**:
+1. **다단계 폴백**: 여러 선택자 시도
+2. **빈 데이터 처리**: 파일명이 없는 경우 기본값 생성
+3. **인코딩 오류 처리**: 여러 인코딩 방식 시도
+4. **네트워크 오류 처리**: 재시도 및 로깅
+
+## Enhanced 아키텍처의 이점
+
+### 1. 설정 주입 지원
+```yaml
+kidp:
+  javascript_config:
+    onclick_patterns:
+      - "submitForm\\(this,'(\\w+)',(\\d+)\\)"
+    detail_url_template: "https://kidp.or.kr/?menuno=1202&bbsno={seq}&..."
+    file_url_template: "https://kidp.or.kr/?menuno=1202&bbsno={file_id}&..."
+```
+
+### 2. 중복 체크 및 조기 종료
+- 처리된 제목의 해시값 저장
+- 연속 중복 3개 발견시 조기 종료
+- 증분 업데이트 지원
+
+### 3. 향상된 로깅
+```python
+logger.info(f"테이블에서 {len(rows)}개 행 발견")
+logger.debug(f"공고 {i+1} 파싱 완료: {title[:30]}...")
+logger.info(f"총 {len(announcements)}개 공고 파싱 완료")
+```
+
+## 성능 최적화
+
+### 1. 요청 간격 조절
+- 기본 1초 대기 (서버 부하 방지)
+- 페이지 간 2초 대기
+- 설정으로 조절 가능
+
+### 2. 메모리 효율성
+- 스트리밍 다운로드 (8KB 청크)
+- 불필요한 HTML 요소 제거
+- 가비지 컬렉션 고려
+
+### 3. 네트워크 최적화
+- Keep-Alive 연결 유지
+- Referer 헤더 설정
+- 적절한 User-Agent 사용
+
+## 디버깅 및 문제해결
+
+### 1. 일반적인 문제들
+1. **테이블 구조 변경**: 클래스명이나 ID 변경시 선택자 업데이트 필요
+2. **JavaScript 함수 변경**: onclick 패턴 변경시 정규표현식 수정
+3. **파일 다운로드 실패**: 세션이나 Referer 헤더 문제
+
+### 2. 디버깅 도구
+```python
+# HTML 저장으로 오프라인 분석
+with open('kidp_debug.html', 'w', encoding='utf-8') as f:
+    f.write(response.text)
+
+# 상세 로깅
+logger.setLevel(logging.DEBUG)
+```
+
+### 3. 테스트 전략
+1. **단계별 테스트**: 목록 → 상세 → 파일 다운로드
+2. **소규모 테스트**: 1페이지만 먼저 테스트
+3. **로그 분석**: 각 단계별 성공/실패 확인
+
+## 운영 경험 및 모니터링
+
+### 1. 주요 지표
+- 페이지별 공고 수: 보통 10-20개
+- 첨부파일 비율: 약 70-80%
+- 평균 파일 크기: 1-5MB (HWP, PDF 중심)
+
+### 2. 일반적인 실패 사례
+1. **네트워크 타임아웃**: 대용량 파일 다운로드시
+2. **파일명 인코딩**: 특수문자 포함 파일명
+3. **사이트 점검**: 정기 점검시 접근 불가
+
+### 3. 모니터링 포인트
+- 성공률: 95% 이상 유지 목표
+- 처리 시간: 페이지당 30초 이내
+- 에러 패턴: 로그 분석으로 개선점 파악
+
+## 확장성 및 유지보수
+
+### 1. 코드 구조화
+- Enhanced 아키텍처로 재사용성 향상
+- 설정 파일 분리로 유지보수 용이
+- 추상화 레벨 적절히 유지
+
+### 2. 향후 개선 방향
+1. **비동기 처리**: asyncio 도입으로 성능 향상
+2. **캐싱**: Redis 등으로 중간 결과 캐싱
+3. **모니터링**: 실시간 대시보드 구축
+
+### 3. 호환성 고려사항
+- Python 3.8+ 지원
+- BeautifulSoup4, requests 라이브러리 의존성
+- YAML 설정 파일 표준화
+
+## 결론 및 권장사항
+
+### 성공 요인
+1. **체계적 분석**: 사이트 구조의 단계적 파악
+2. **견고한 처리**: 다양한 예외 상황 대응
+3. **설정 기반**: 하드코딩 최소화
+
+### 개발팀 권장사항
+1. **로그 우선**: 충분한 로깅으로 문제 진단 용이성 확보
+2. **테스트 자동화**: 회귀 테스트로 안정성 보장
+3. **문서화**: 기술 부채 최소화를 위한 상세 문서 작성
+
+### 운영팀 권장사항
+1. **점진적 배포**: 새 버전은 소규모 테스트 후 전면 적용
+2. **모니터링 강화**: 실패율 및 성능 지표 추적
+3. **백업 계획**: 이전 버전으로 롤백 가능한 구조 유지
+
+---
+
+## 기술 스택 요약
+- **언어**: Python 3.8+
+- **핵심 라이브러리**: requests, BeautifulSoup4, html2text
+- **아키텍처**: Enhanced Base Scraper (JavaScriptScraper 상속)
+- **설정**: YAML 기반 구성 관리
+- **로깅**: Python logging 모듈
+
+## 최신 개발 이슈 및 해결 과정
+
+### 2024년 파일 다운로드 문제
+**문제**: 모든 다운로드 파일이 동일한 크기(42,632 bytes)의 HTML 파일로 저장되는 현상
+**원인 분석**: 
+- KIDP는 직접 다운로드 링크가 아닌 JavaScript 폼 제출 방식 사용
+- onclick="submitForm(this,'down',파일ID,'')" 패턴
+- 실제 다운로드는 /skin/board/Valid.html 엔드포인트로 POST 요청
+
+**해결 방법** (2024.12.10 최종 수정):
+1. JavaScript submitForm() 함수 역엔지니어링
+2. onclick 속성에서 파일 ID 추출: `submitForm(this,'down',64303,'')`
+3. 올바른 엔드포인트 사용: `/skin/board/Valid.html?{timestamp}`
+4. 필수 폼 데이터 포함:
+   ```
+   ztag=rO0ABXQAMzxjYWxsIHR5cGU9ImJvYXJkIiBubz0iNjIyIiBza2luPSJraWRwX2JicyI+PC9jYWxsPg==
+   cates=, key=, keyword=, siteno=16, pageIndex=1, subname=
+   act=down, fno={파일ID}
+   ```
+5. 적절한 헤더 설정 (Referer, Origin, Content-Type)
+6. 타임스탬프를 URL에 추가하여 JavaScript와 동일한 동작 구현
+
+**기술적 세부사항**:
+- KIDP의 JavaScript에서 `setHidden('fno', n)` 방식으로 파일 ID 설정
+- 폼 액션을 `/skin/board/Valid.html?{timestamp}`로 변경
+- 일반 폼 제출(submit), AJAX 아님
+- POST 데이터에서 'fno' 필드가 핵심 (bbsno 아님)
+
+## 연락처 및 지원
+- **개발팀**: [개발팀 연락처]
+- **문서 버전**: v2.1 (2025.06)
+- **최종 업데이트**: 파일 다운로드 메커니즘 수정 완료

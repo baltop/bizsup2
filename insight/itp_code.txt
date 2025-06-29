@@ -1,0 +1,411 @@
+# ITP Enhanced 업그레이드 개발 가이드
+
+## 1. 프로젝트 개요
+
+인천테크노파크(ITP) 스크래퍼를 기존 BaseScraper에서 Enhanced 아키텍처로 리팩토링한 과정과 핵심 기술 사항을 정리한 문서입니다.
+
+## 2. Enhanced 아키텍처 변경사항
+
+### 2.1 상속 구조 변경
+```python
+# 기존 (itp_scraper.py)
+class ITPScraper(BaseScraper):
+
+# 변경 후 (enhanced_itp_scraper.py)  
+class EnhancedITPScraper(JavaScriptScraper):
+```
+
+### 2.2 JavaScriptScraper 선택 이유
+- ITP 사이트는 JavaScript 함수 기반으로 동작
+- `fncShow('seq')` - 상세 페이지 이동
+- `fncFileDownload('folder', 'file')` - 파일 다운로드
+- JavaScript 데이터 추출 기능이 필요
+
+## 3. 핵심 기능 구현
+
+### 3.1 JavaScript URL 추출
+
+#### 상세 페이지 URL 생성
+```python
+def _extract_detail_url(self, href: str) -> str:
+    """JavaScript 함수에서 상세 URL 추출"""
+    # JavaScript fncShow 함수에서 seq 추출
+    seq_match = re.search(r"fncShow\('(\d+)'\)", href)
+    if seq_match:
+        seq = seq_match.group(1)
+        return f"{self.base_url}/intro.asp?tmid=13&seq={seq}"
+    else:
+        # 다른 패턴이나 직접 링크인 경우
+        return urljoin(self.base_url, href)
+```
+
+**패턴 분석:**
+- 입력: `javascript:fncShow('12345')`
+- 추출: `12345` (seq 값)
+- 출력: `https://itp.or.kr/intro.asp?tmid=13&seq=12345`
+
+#### 파일 다운로드 URL 생성
+```python
+def _extract_download_url_from_onclick(self, onclick: str) -> str:
+    """onclick 속성에서 다운로드 URL 추출"""
+    match = re.search(r"fncFileDownload\('([^']+)',\s*'([^']+)'\)", onclick)
+    if match:
+        folder = match.group(1)
+        filename = match.group(2)
+        # 실제 다운로드 URL 구성
+        return f"{self.base_url}/UploadData/{folder}/{filename}"
+    return ""
+```
+
+**패턴 분석:**
+- 입력: `fncFileDownload('folder123', 'test.pdf')`
+- 추출: `folder123`, `test.pdf`
+- 출력: `https://itp.or.kr/UploadData/folder123/test.pdf`
+
+### 3.2 다단계 첨부파일 검색
+
+ITP 사이트는 다양한 HTML 구조를 사용하므로 3단계 검색 전략 적용:
+
+#### 1단계: dl/dt/dd 구조
+```python
+def _extract_attachments_from_dl(self, view_dl):
+    """dl 구조에서 첨부파일 추출"""
+    attachments = []
+    dts = view_dl.find_all('dt')
+    
+    for dt in dts:
+        if '첨부파일' in dt.get_text():
+            # 다음 dd 태그 찾기
+            dd = dt.find_next_sibling('dd')
+            if dd:
+                file_links = dd.find_all('a', href=True)
+                for link in file_links:
+                    attachment = self._process_file_link(link)
+                    if attachment:
+                        attachments.append(attachment)
+    
+    return attachments
+```
+
+#### 2단계: 테이블 구조
+```python
+def _extract_attachments_from_table(self, soup):
+    """테이블 구조에서 첨부파일 추출"""
+    attachments = []
+    file_rows = soup.find_all('tr')
+    
+    for row in file_rows:
+        th = row.find('th')
+        if th and '첨부파일' in th.get_text():
+            td = row.find('td')
+            if td:
+                file_links = td.find_all('a', href=True)
+                for link in file_links:
+                    attachment = self._process_file_link(link)
+                    if attachment:
+                        attachments.append(attachment)
+    
+    return attachments
+```
+
+#### 3단계: 패턴 기반 검색
+```python
+def _extract_attachments_by_patterns(self, soup):
+    """패턴 기반 첨부파일 추출"""
+    attachments = []
+    
+    # 파일 다운로드 링크 패턴
+    download_patterns = [
+        'a[href*="download"]',
+        'a[href*="file"]', 
+        'a[href*=".hwp"]',
+        'a[href*=".pdf"]',
+        'a[href*=".docx"]',
+        'a[href*=".xlsx"]',
+        'a[href*=".zip"]'
+    ]
+    
+    for pattern in download_patterns:
+        links = soup.select(pattern)
+        for link in links:
+            # 파일 처리 로직
+```
+
+### 3.3 파일명 정리 로직
+
+ITP는 파일명에 크기 정보가 포함되어 있어 정리가 필요:
+
+```python
+def _process_file_link(self, link):
+    """개별 파일 링크 처리"""
+    file_name = link.get_text(strip=True)
+    
+    # 파일명 정리 (크기 정보 제거)
+    if file_name and not file_name.isspace():
+        # "파일명.확장자(크기KB)" 형태에서 파일명만 추출
+        file_name_match = re.match(r'^(.+?)\s*\(\d+KB\)$', file_name)
+        if file_name_match:
+            file_name = file_name_match.group(1).strip()
+        
+        if file_url:  # URL이 있을 때만 반환
+            return {
+                'name': file_name,
+                'url': file_url
+            }
+    
+    return None
+```
+
+**예시:**
+- 입력: `"2024년_공고문.hwp(245KB)"`
+- 출력: `"2024년_공고문.hwp"`
+
+## 4. 설정 파일 업데이트
+
+### 4.1 sites_config.yaml 변경사항
+
+```yaml
+# 변경 전
+itp:
+  name: "인천테크노파크"
+  scraper_class: "ITPScraper"
+  scraper_module: "itp_scraper"
+  base_url: "https://www.itp.or.kr"
+  list_url: "https://www.itp.or.kr/kr/index.php"
+  type: "javascript"
+  encoding: "auto"
+  ssl_verify: true
+  pagination:
+    type: "query_param"
+    param: "page"
+
+# 변경 후  
+itp:
+  name: "인천테크노파크"
+  scraper_class: "EnhancedITPScraper"
+  scraper_module: "enhanced_itp_scraper"
+  base_url: "https://itp.or.kr"
+  list_url: "https://itp.or.kr/intro.asp?tmid=13"
+  type: "javascript"
+  encoding: "auto"
+  ssl_verify: false
+  pagination:
+    type: "query_param"
+    param: "PageNum"
+```
+
+**주요 변경사항:**
+1. `scraper_class`: `ITPScraper` → `EnhancedITPScraper`
+2. `scraper_module`: `itp_scraper` → `enhanced_itp_scraper`
+3. `base_url`: `https://www.itp.or.kr` → `https://itp.or.kr` (www 제거)
+4. `list_url`: 실제 공고 목록 URL로 변경
+5. `ssl_verify`: `true` → `false` (SSL 인증서 문제 해결)
+6. `pagination.param`: `page` → `PageNum` (실제 파라미터명)
+
+## 5. 에러 해결 방법
+
+### 5.1 SSL 인증서 에러
+**문제:** `SSLError: [SSL: CERTIFICATE_VERIFY_FAILED]`
+
+**해결:**
+```python
+self.verify_ssl = False  # SSL 인증서 검증 비활성화
+```
+
+**설정 파일:**
+```yaml
+ssl_verify: false
+```
+
+### 5.2 JavaScript 함수 추출 실패
+**문제:** `fncShow` 함수에서 seq 값을 추출하지 못함
+
+**해결:**
+```python
+# 정규표현식 패턴 개선
+seq_match = re.search(r"fncShow\('(\d+)'\)", href)
+if seq_match:
+    seq = seq_match.group(1)
+    return f"{self.base_url}/intro.asp?tmid=13&seq={seq}"
+```
+
+**디버깅 팁:**
+```python
+print(f"원본 href: {href}")
+print(f"추출된 seq: {seq}")
+print(f"생성된 URL: {detail_url}")
+```
+
+### 5.3 첨부파일을 찾지 못하는 경우
+**문제:** 첨부파일이 있는데 추출되지 않음
+
+**해결 전략:**
+1. HTML 구조 확인
+2. 다양한 선택자 시도
+3. 로깅 추가
+
+```python
+logger.info(f"첨부파일 {len(attachments)}개 발견")
+for i, att in enumerate(attachments):
+    logger.debug(f"  {i+1}: {att['name']} -> {att['url']}")
+```
+
+### 5.4 페이지네이션 파라미터 오류
+**문제:** 두 번째 페이지 이후 접근 실패
+
+**해결:**
+```python
+def get_list_url(self, page_num: int) -> str:
+    if page_num == 1:
+        return self.list_url
+    else:
+        # ITP는 PageNum 파라미터 사용
+        return f"{self.list_url}&PageNum={page_num}"
+```
+
+## 6. 테스트 방법
+
+### 6.1 기본 기능 테스트
+```python
+from enhanced_itp_scraper import EnhancedITPScraper
+
+# 스크래퍼 생성
+scraper = EnhancedITPScraper()
+
+# URL 생성 테스트
+url1 = scraper.get_list_url(1)
+url2 = scraper.get_list_url(2)
+print(f"1페이지: {url1}")
+print(f"2페이지: {url2}")
+
+# JavaScript 함수 테스트
+test_href = "javascript:fncShow('12345')"
+extracted_url = scraper._extract_detail_url(test_href)
+print(f"추출된 URL: {extracted_url}")
+```
+
+### 6.2 스크래핑 엔진 통합 테스트
+```python
+from scraping_engine import create_engine
+
+engine = create_engine()
+config = engine.registry.get_site_config('itp')
+scraper = engine.registry.create_scraper('itp')
+
+print(f"스크래퍼 타입: {type(scraper).__name__}")
+print(f"SSL 검증: {scraper.verify_ssl}")
+```
+
+### 6.3 실제 스크래핑 테스트 (조심스럽게)
+```python
+# 1페이지만 테스트
+engine = create_engine()
+result = engine.scrape_site('itp', max_pages=1, output_dir='test_output')
+```
+
+## 7. 성능 최적화 팁
+
+### 7.1 요청 간격 조절
+```python
+# Enhanced 아키텍처의 기본 설정
+self.delay_between_requests = 1  # 요청 간 1초 대기
+self.delay_between_pages = 2     # 페이지 간 2초 대기
+```
+
+### 7.2 중복 체크 활용
+Enhanced 아키텍처는 자동으로 중복 공고를 체크하여 불필요한 처리를 방지:
+
+```python
+# 자동으로 처리됨
+self.enable_duplicate_check = True
+self.duplicate_threshold = 3  # 연속 3개 중복시 조기 종료
+```
+
+### 7.3 로깅 레벨 조정
+```python
+import logging
+logging.basicConfig(level=logging.INFO)  # 운영시
+logging.basicConfig(level=logging.DEBUG) # 디버깅시
+```
+
+## 8. 개발 프로세스
+
+### 8.1 리팩토링 단계
+1. **분석**: 기존 스크래퍼 코드 분석
+2. **선택**: 적절한 Enhanced 베이스 클래스 선택 (JavaScriptScraper)
+3. **구현**: 핵심 메서드 구현 및 기능 분리
+4. **설정**: sites_config.yaml 업데이트
+5. **테스트**: 단계별 테스트 실행
+6. **최적화**: 로깅 및 에러 처리 개선
+
+### 8.2 코드 구조화 원칙
+- **단일 책임**: 각 메서드는 하나의 기능만 담당
+- **모듈화**: 기능별로 메서드 분리 (`_extract_*`, `_find_*`)
+- **재사용성**: 공통 로직은 베이스 클래스 활용
+- **확장성**: 새로운 패턴 추가가 용이한 구조
+
+## 9. 문제 해결 체크리스트
+
+### 9.1 스크래퍼가 실행되지 않는 경우
+- [ ] import 경로 확인
+- [ ] sites_config.yaml 설정 확인
+- [ ] SSL 설정 확인
+- [ ] 베이스 URL 유효성 확인
+
+### 9.2 공고 목록이 추출되지 않는 경우
+- [ ] HTML 구조 변경 확인
+- [ ] 테이블 선택자 확인
+- [ ] JavaScript 함수명 변경 확인
+- [ ] 페이지네이션 파라미터 확인
+
+### 9.3 첨부파일이 다운로드되지 않는 경우
+- [ ] JavaScript 함수 패턴 확인
+- [ ] 다운로드 URL 구조 확인
+- [ ] 파일명 추출 로직 확인
+- [ ] 권한 및 세션 문제 확인
+
+### 9.4 성능 문제가 있는 경우
+- [ ] 요청 간격 조정
+- [ ] 중복 체크 임계값 조정
+- [ ] 로깅 레벨 조정
+- [ ] 타임아웃 설정 확인
+
+## 10. 향후 개선 방향
+
+### 10.1 기능 개선
+- **동적 JavaScript 실행**: Playwright 통합 고려
+- **파일 타입 검증**: 다운로드 전 파일 타입 확인
+- **재시도 로직**: 네트워크 오류시 자동 재시도
+- **캐싱**: 반복 요청 최소화
+
+### 10.2 모니터링 개선
+- **상태 대시보드**: 실시간 스크래핑 상태 확인
+- **알림 시스템**: 오류 발생시 알림
+- **통계 수집**: 스크래핑 성공률 및 성능 통계
+
+## 11. 추가 참고사항
+
+### 11.1 ITP 사이트 특성
+- **JavaScript 의존성**: 핵심 기능이 JavaScript 기반
+- **SSL 인증서 문제**: 자체 서명 인증서 사용
+- **파일명 형식**: 크기 정보가 포함된 특수 형식
+- **페이지네이션**: PageNum 파라미터 사용
+
+### 11.2 Enhanced 아키텍처 장점
+- **중복 방지**: 자동 중복 공고 체크
+- **로깅**: 상세한 로깅 및 에러 추적
+- **설정 주입**: 런타임 설정 변경 가능
+- **확장성**: 새로운 기능 추가 용이
+
+### 11.3 유지보수 가이드
+- **정기 점검**: 월 1회 사이트 구조 변경 확인
+- **로그 모니터링**: 일일 로그 확인 및 이상 징후 파악
+- **설정 백업**: sites_config.yaml 변경시 백업
+- **테스트 자동화**: CI/CD 파이프라인 구축 고려
+
+---
+
+**작성일**: 2025-06-10
+**작성자**: Claude Code
+**버전**: Enhanced ITP Scraper v1.0
+**최종 업데이트**: 2025-06-10 08:42 KST

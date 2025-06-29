@@ -1,0 +1,173 @@
+# 함안상공회의소 스크래퍼 개발 인사이트
+
+## 사이트 기본 정보
+- **URL**: https://hamancci.korcham.net/front/board/boardContentsListPage.do?boardId=10521&menuId=10057
+- **사이트 유형**: AJAX API 기반 동적 로딩
+- **인코딩**: UTF-8
+- **SSL**: 유효한 인증서 사용
+
+## 주요 기술적 특징
+
+### 1. AJAX API 기반 콘텐츠 로딩
+- **문제**: 일반적인 HTML 파싱으로는 공고 목록을 가져올 수 없음
+- **원인**: JavaScript를 통해 AJAX 호출로 동적으로 콘텐츠를 로드하는 구조
+- **해결책**: 직접 AJAX API 엔드포인트 호출
+```python
+api_url = f"{self.base_url}/front/board/boardContentsList.do"
+data = {
+    'miv_pageNo': str(page_num),
+    'miv_pageSize': '15',
+    'boardId': '10521',
+    'menuId': '10057',
+    # ... 기타 필수 파라미터
+}
+response = self.post_page(api_url, data=data)
+```
+
+### 2. JavaScript 기반 상세 페이지 접근
+- **패턴**: `contentsView('114136')` 형태의 onclick 이벤트
+- **URL 구성**: `/front/board/boardContentsView.do?contId={id}&boardId=10521&menuId=10057`
+- **추출 로직**:
+```python
+id_match = re.search(r"contentsView\('(\d+)'\)", onclick)
+if id_match:
+    content_id = id_match.group(1)
+    detail_url = f"{self.base_url}/front/board/boardContentsView.do?contId={content_id}&boardId=10521&menuId=10057"
+```
+
+### 3. 복잡한 본문 추출 구조
+- **주요 선택자**: `td.td_p` (본문 내용)
+- **대체 방법**: `div.boardveiw` 내부 테이블 구조 파싱
+- **특징**: 테이블 기반 레이아웃에서 colspan="4" 속성을 가진 td 요소가 본문
+
+### 4. 첨부파일 처리
+- **구조**: `ul.file_view` 내부의 `li > a` 링크들
+- **URL 형태**: `/file/dext5uploaddata/...` 상대 경로
+- **다운로드**: 직접 링크 방식, Referer 헤더 필요
+
+## 개발 과정에서 발견한 문제점과 해결책
+
+### 1. 초기 HTML 파싱 실패
+**문제**: 목록 페이지에서 공고 테이블을 찾을 수 없음
+```
+공고 테이블을 찾을 수 없습니다
+boardlist div는 찾았지만 내부 테이블이 없습니다
+```
+
+**분석**: 브라우저에서는 보이지만 서버 응답에는 테이블이 없음 → AJAX 로딩 확인
+
+**해결**: 브라우저 개발자 도구로 네트워크 탭 분석 → AJAX API 호출 발견
+
+### 2. 파일 다운로드 시 import 오류
+**문제**: `name 'os' is not defined`
+**원인**: `_extract_filename_from_response` 메서드 내부에서 os 모듈 import 누락
+**해결**: 메서드 내부에 `import os` 추가
+
+### 3. 한글 파일명 인코딩 문제
+**해결된 패턴**:
+```python
+def _extract_filename_from_response(self, response, default_path):
+    content_disposition = response.headers.get('Content-Disposition', '')
+    
+    # RFC 5987 형식 우선 처리
+    rfc5987_match = re.search(r"filename\*=([^']*)'([^']*)'(.+)", content_disposition)
+    if rfc5987_match:
+        encoding, lang, filename = rfc5987_match.groups()
+        filename = unquote(filename, encoding=encoding or 'utf-8')
+    
+    # 다양한 인코딩 시도 (UTF-8, EUC-KR, CP949)
+    for encoding in ['utf-8', 'euc-kr', 'cp949']:
+        try:
+            decoded = filename.encode('latin-1').decode(encoding)
+            if decoded and not decoded.isspace():
+                return clean_filename
+        except:
+            continue
+```
+
+## 성능 및 통계
+
+### 테스트 결과 (3페이지)
+- **총 수집 공고**: 46개
+- **다운로드 파일**: 65개
+- **성공률**: 100% (모든 공고 정상 처리)
+- **파일 형식**: PDF, HWP 등 다양한 형식
+- **처리 시간**: 약 2-3분 (파일 다운로드 포함)
+
+### 페이지별 분포
+- 페이지당 평균 15-16개 공고
+- 첨부파일이 있는 공고 비율: 약 80%
+- 공고별 평균 첨부파일: 1.4개
+
+## 재사용 가능한 기술 패턴
+
+### 1. AJAX API 호출 패턴
+```python
+def _get_page_announcements(self, page_num: int) -> list:
+    api_url = self.get_list_url(page_num)
+    data = self._build_api_data(page_num)
+    response = self.post_page(api_url, data=data)
+    return self.parse_list_page(response.text)
+```
+
+### 2. JavaScript 파라미터 추출
+```python
+# 다양한 패턴 지원
+patterns = [
+    r"contentsView\('(\d+)'\)",
+    r"viewDetail\('(\d+)'\)",
+    r"showContent\('(\d+)'\)"
+]
+```
+
+### 3. 다단계 폴백 본문 추출
+```python
+# 우선순위 기반 선택자 시도
+selectors = [
+    'td.td_p',                    # 가장 구체적
+    'div.boardveiw td[colspan="4"]', # 대체 방법
+    'div.content',                # 일반적 패턴
+    'div.board-content'           # 최후 방법
+]
+```
+
+## 유사 사이트 적용 가능성
+
+이 패턴은 다음과 같은 사이트에서 재사용 가능:
+1. **한국상공회의소 계열 사이트들** - 동일한 CMS 시스템 사용
+2. **AJAX 기반 게시판** - 동적 로딩 방식
+3. **JavaScript 기반 네비게이션** - onclick 이벤트 방식
+
+## 개발 팁
+
+### 1. AJAX 사이트 식별 방법
+- 페이지 소스보기 vs 브라우저 렌더링 결과 비교
+- 네트워크 탭에서 XHR/Fetch 요청 확인
+- "contents_detail" 등의 빈 div 존재 여부
+
+### 2. API 파라미터 분석
+- 필수 파라미터: boardId, menuId
+- 페이지네이션: miv_pageNo, miv_pageSize
+- 검색 조건: searchKey, searchTxt (빈 값 가능)
+
+### 3. 디버깅 전략
+- HTML 구조 출력으로 실제 응답 내용 확인
+- API 응답과 브라우저 렌더링 결과 비교
+- 단계별 로그 출력으로 실패 지점 특정
+
+## 특별한 기술적 도전
+
+### 1. 동적 콘텐츠 감지
+**도전**: 정적 HTML 파싱으로는 내용을 가져올 수 없는 상황
+**해결**: JavaScript 실행 없이 직접 AJAX API 호출하는 방법 개발
+
+### 2. 복잡한 테이블 구조 파싱
+**도전**: 중첩된 테이블과 복잡한 셀 구조
+**해결**: 다단계 폴백 로직으로 안정성 확보
+
+### 3. Enhanced Base Scraper 활용
+**특징**: StandardTableScraper를 상속받아 기본 기능 활용
+**장점**: 중복 체크, 파일 다운로드, 인코딩 처리 등 자동 지원
+**확장**: AJAX API 호출을 위한 `_get_page_announcements` 메서드 오버라이드
+
+이러한 인사이트들은 향후 유사한 구조의 상공회의소 사이트나 AJAX 기반 게시판 스크래핑에 직접 활용할 수 있습니다.

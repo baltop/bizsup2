@@ -1,0 +1,202 @@
+# SMTECH (중소기업기술정보진흥원) Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 정보
+- **사이트명**: 중소기업기술정보진흥원 (SMTECH)
+- **URL**: https://www.smtech.go.kr/front/ifg/no/notice02_list.do
+- **관리기관**: 중소벤처기업부
+- **특징**: 표준적인 테이블 기반 게시판, JavaScript 파일 다운로드
+
+## 기술적 특징
+
+### 1. 페이지 구조
+- **목록 페이지**: 표준 테이블 기반 (`<table summary="사업공고 목록">`)
+- **페이지네이션**: GET 파라미터 `pageIndex` 방식
+- **한 페이지당 공고 수**: 15개
+- **상세 페이지**: notice02_detail.do 링크
+
+### 2. URL 파라미터 구조
+```
+notice02_detail.do?ancmId=value&buclCd=value&dtlAncmSn=value&pageIndex=value
+```
+- **ancmId**: 공고 ID
+- **buclCd**: 사업 코드
+- **dtlAncmSn**: 상세 공고 일련번호
+- **pageIndex**: 페이지 번호
+
+### 3. 테이블 구조 (목록 페이지)
+| 컬럼 | 내용 | 인덱스 |
+|------|------|--------|
+| No | 순번 | 0 |
+| 사업명 | 사업 분류 | 1 |
+| 제목 | 공고 제목 (링크 포함) | 2 |
+| 접수기간 | 신청 기간 | 3 |
+| 공고일 | 게시일 | 4 |
+| 상태 | 진행 상태 | 5 |
+
+### 4. 첨부파일 다운로드 방식
+**JavaScript 함수 기반**:
+```javascript
+cfn_AtchFileDownload('DF2CA1CDD4664BCD3C7294CD7CB7D562','/front','fileDownFrame')
+```
+- 파일 ID를 사용한 JavaScript 함수 호출
+- 브라우저 실행 없이는 다운로드 불가
+- 추정 다운로드 URL: `/front/fileDownload.do?fileId=파일ID`
+
+### 5. 상세 페이지 본문 구조
+- **테이블 형태**: `<table summary="사업공고 목록보기 내용">`
+- **본문 위치**: "내용" 라벨을 가진 `<th>` 다음의 `<td>`
+- **Fallback**: 가장 긴 텍스트를 가진 `<td>` 요소
+
+## 구현 핵심 포인트
+
+### 1. 목록 페이지 파싱
+```python
+# 테이블과 tbody 찾기
+table = soup.find('table', {'summary': '사업공고 목록'}) or soup.find('table')
+tbody = table.find('tbody')
+rows = tbody.find_all('tr')
+
+# 각 행에서 링크 추출
+title_link = title_cell.find('a', href=lambda x: x and 'notice02_detail.do' in x)
+```
+
+### 2. URL 파라미터 추출
+```python
+from urllib.parse import urlparse, parse_qs
+
+parsed_url = urlparse(href)
+query_params = parse_qs(parsed_url.query)
+
+announcement = {
+    'ancmId': query_params.get('ancmId', [''])[0],
+    'buclCd': query_params.get('buclCd', [''])[0],
+    'dtlAncmSn': query_params.get('dtlAncmSn', [''])[0],
+    'pageIndex': query_params.get('pageIndex', [''])[0]
+}
+```
+
+### 3. 상세 페이지 본문 추출
+```python
+# 우선순위 1: '내용' 테이블 셀
+content_table = soup.find('table', {'summary': '사업공고 목록보기 내용'})
+for row in content_table.find_all('tr'):
+    th = row.find('th')
+    if th and '내용' in th.get_text():
+        td = row.find('td')
+        if td:
+            content = self.h.handle(str(td))
+
+# Fallback: 가장 긴 텍스트의 td
+for td in soup.find_all('td'):
+    td_text = td.get_text(strip=True)
+    if len(td_text) > max_length and len(td_text) > 50:
+        content = self.h.handle(str(td))
+```
+
+### 4. JavaScript 첨부파일 처리
+```python
+# JavaScript 링크 탐지
+js_links = soup.find_all('a', href=lambda x: x and x.startswith('javascript:cfn_AtchFileDownload'))
+
+# 파일 ID 추출
+match = re.search(r"cfn_AtchFileDownload\s*\(\s*['\"]([^'\"]+)['\"]", href)
+if match:
+    file_id = match.group(1)
+    file_url = f"{self.base_url}/front/fileDownload.do?fileId={file_id}"
+```
+
+## 제약사항 및 한계
+
+### 1. JavaScript 파일 다운로드
+- **문제**: cfn_AtchFileDownload 함수가 브라우저 환경에서만 동작
+- **현재 상태**: 파일 감지는 가능하나 실제 다운로드 불가
+- **해결 방안**: Playwright 등 브라우저 자동화 도구 필요
+
+### 2. 세션 의존성
+- **특징**: 파일 다운로드 시 세션 쿠키 필요 가능성
+- **대응**: requests.Session() 사용으로 세션 유지
+
+## 성능 결과
+
+### 테스트 결과 (3페이지)
+- **공고 수집**: 45개 (100% 성공)
+- **내용 추출**: 100% 성공률
+- **첨부파일 다운로드**: 0% (JavaScript 제약)
+- **처리 속도**: 약 30-45초 (3페이지)
+
+### 검증 통과 기준
+- SMTECH 관련 키워드 포함: `smtech.go.kr`, `중소기업기술정보진흥원`, `SMTECH`, `중소벤처기업부`
+- 원본 URL 포함 여부
+- content.md 파일 생성 확인
+
+## 코드 재사용성
+
+### 다른 사이트에 적용 가능한 패턴
+
+1. **표준 테이블 파싱 로직**:
+   - summary 속성을 가진 테이블 우선 탐지
+   - tbody/tr 구조 기반 행 추출
+   - 셀 인덱스 기반 데이터 매핑
+
+2. **URL 파라미터 처리**:
+   - parse_qs를 사용한 쿼리 파라미터 추출
+   - 다중 파라미터 지원 구조
+
+3. **Fallback 본문 추출**:
+   - 특정 선택자 실패 시 텍스트 길이 기반 대체
+   - 메타정보 키워드 필터링
+
+4. **JavaScript 링크 처리**:
+   - 정규표현식 기반 함수 파라미터 추출
+   - 추정 URL 생성 패턴
+
+## 개발 시사점
+
+### 1. Enhanced 아키텍처의 효과
+- **StandardTableScraper 상속**으로 기본 기능 재사용
+- **설정 주입 패턴**으로 향후 YAML 설정 지원 가능
+- **Fallback 메커니즘**으로 파싱 실패 최소화
+
+### 2. 디버깅 개선
+- **구조화된 로깅**으로 단계별 진행 상황 추적
+- **상세한 오류 정보**로 문제 진단 용이
+- **테스트 결과 검증**으로 품질 보장
+
+### 3. 유지보수성
+- **모듈화된 메서드**로 각 기능 독립적 수정 가능
+- **타입 힌트**로 코드 가독성 향상
+- **하위 호환성 별칭**으로 기존 코드와 연동
+
+## 향후 개선 방안
+
+### 1. JavaScript 파일 다운로드 지원
+```python
+# Playwright 통합 예시
+async def download_js_files(self, attachments):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        # JavaScript 함수 실행으로 파일 다운로드
+```
+
+### 2. 설정 파일 지원
+```yaml
+# smtech_config.yaml
+selectors:
+  list_table: 'table[summary="사업공고 목록"]'
+  content_area: 'table[summary="사업공고 목록보기 내용"]'
+pagination:
+  param: 'pageIndex'
+  type: 'get'
+```
+
+### 3. 성능 최적화
+- 비동기 요청 도입으로 병렬 처리
+- 캐시 메커니즘으로 중복 요청 방지
+- 스트리밍 다운로드로 메모리 효율성 개선
+
+## 결론
+
+SMTECH 스크래퍼는 Enhanced 아키텍처의 표준 패턴을 성공적으로 구현하여 높은 안정성과 확장성을 보여줍니다. JavaScript 파일 다운로드라는 기술적 제약이 있지만, 공고 본문 수집에서는 100% 성공률을 달성했습니다. 
+
+이 구현은 향후 유사한 정부/공공기관 사이트 스크래퍼 개발 시 재사용 가능한 패턴과 솔루션을 제공합니다.

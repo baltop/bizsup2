@@ -1,0 +1,20 @@
+site_code,site_name,start_url
+gsif,강릉과학산업진흥원,https://mybiz.gsipa.or.kr/gsipa/bbs_list.do?code=sub03a&keyvalue=sub03
+djbaAnnc,대전일자리경제진흥원 - 유관기관,https://www.djbea.or.kr/pms/st/st_0205/list
+gimb,환동해산업연구원,http://mire.re.kr/sub4_4.php?PHPSESSID=e90e1c5af211a879b62c46091ad71dce
+dcb,(재)부산디자인진흥원,https://www.dcb.or.kr/01_news/?mcode=0401010000
+jbf,(재)전남바이오진흥원,http://www.jbf.kr/main/board.action?cmsid=101050200000
+cepaMarket,충남경제진흥원-공지사항,https://www.cepa.or.kr/notice/notice.do?pm=6&ms=32
+cheongjucci,청주상공회의소,https://cheongjucci.korcham.net/front/board/boardContentsListPage.do?boardId=10701&menuId=1561
+gib,경북바이오산업연구원,https://gib.re.kr/module/bbs/list.php?mid=/news/notice
+gbtpinfo,경북테크노파크 - 일반공고,https://gbtp.or.kr/user/board.do?bbsId=BBSMSTR_000000000023
+dgdc,대구경북디자인진흥원,https://dgdp.or.kr/notice/public
+exportvoucher,수출지원기반활용사업,https://www.exportvoucher.com/portal/board/boardList?bbs_id=1
+dgmif,대구경북첨단의료산업진흥재단,https://www.kmedihub.re.kr/index.do?menu_id=00000063
+jepa,전라남도중소기업일자리경제진흥원-공지사항,https://www.jepa.kr/bbs/?b_id=notice&site=new_jepa&mn=426
+smtech,중소기업 기술개발사업 종합관리시스템,https://www.smtech.go.kr/front/ifg/no/notice02
+kca,한국방송통신전파진흥원,https://www.kca.kr/boardList.do?boardId=NOTICE&pageId=www47
+itech,한국산업기술기획평가원,https://srome.keit.re.kr/srome/biz/perform/opnnPrpsl/retrieveTaskAnncmListView.do?prgmId=XPG201040000&rcveStatus=A
+kdata,한국데이터산업진흥원,https://www.kdata.or.kr/kr/board/notice_01/boardList.do
+koema,한국전기산업진흥회,https://www.koema.or.kr/koema/report/total_notice.html
+# 77 부터 100

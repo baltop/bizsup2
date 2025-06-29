@@ -1,0 +1,200 @@
+# GDTP (경기도기술개발원) Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 특성 분석
+
+### 기본 정보
+- **사이트**: 경기도기술개발원 (GDTP)
+- **URL**: https://www.gdtp.or.kr/board/notice
+- **인코딩**: UTF-8
+- **SSL**: 비활성화 필요 (verify=False)
+- **구조**: Div 기반 레이아웃 (테이블 구조가 아님)
+
+### 페이지네이션
+- **방식**: GET 파라미터 (`?page=2`)
+- **URL 패턴**: `https://www.gdtp.or.kr/board/notice?&page={page_num}`
+- **첫 페이지**: 파라미터 없음
+
+### HTML 구조 특징
+- **목록 컨테이너**: `<div class="tbody">`
+- **개별 공고**: `<div class="colgroup">` (공지사항은 `<div class="colgroup noti">`)
+- **제목**: `<div class="btitle"> → <h3> → <a>`
+- **날짜**: `<div class="bdate">` (YY-MM-DD 형식)
+- **첨부파일**: `<div class="bdown">` (아이콘 유무로 판단)
+- **조회수**: `<div class="bview">`
+
+## 주요 기술적 구현 특징
+
+### 1. Div 기반 목록 파싱
+```python
+def _parse_list_fallback(self, html_content: str) -> List[Dict[str, Any]]:
+    # 테이블이 아닌 div.tbody 구조 사용
+    tbody_div = soup.find('div', class_='tbody')
+    colgroups = tbody_div.find_all('div', class_='colgroup')
+    
+    for colgroup in colgroups:
+        # btitle 클래스에서 제목과 링크 추출
+        title_div = colgroup.find('div', class_='btitle')
+        h3_elem = title_div.find('h3')
+        link_elem = h3_elem.find('a')
+```
+
+### 2. JavaScript 기반 파일 다운로드
+```python
+def _extract_attachments(self, soup: BeautifulSoup, page_url: str = None):
+    # href에서 JavaScript 함수 호출 패턴 파싱
+    # href="javascript:file_download('https://www.gdtp.or.kr/postact/download/3082')"
+    
+    js_pattern = onclick if 'file_download' in onclick else href if 'file_download' in href else ''
+    if 'file_download' in js_pattern:
+        match = re.search(r"file_download\(['\"]([^'\"]+)['\"]", js_pattern)
+        if match:
+            download_url = match.group(1)  # 직접 추출된 실제 다운로드 URL
+```
+
+### 3. 한글 파일명 처리
+- **파일명 위치**: `<span>` 태그 내부 또는 링크 텍스트
+- **크기 정보 제거**: `파일명.pdf(3.5 MB)` → `파일명.pdf`
+- **인코딩**: UTF-8 기본, 별도 인코딩 처리 불필요
+
+### 4. 날짜 형식 처리
+```python
+# YY-MM-DD 형식을 YYYY-MM-DD로 변환
+date_match = re.search(r'(\d{2}-\d{1,2}-\d{1,2})', date_text)
+if date_match:
+    date = "20" + date_match.group(1)  # 20을 앞에 붙여 4자리 연도로 변환
+```
+
+## 주요 해결책
+
+### 1. 기존 문제: 테이블 파싱 실패
+**원인**: GDTP는 전통적인 HTML `<table>` 구조가 아닌 CSS div 기반 레이아웃 사용
+
+**해결책**: 
+- `<div class="tbody">` 컨테이너 인식
+- `<div class="colgroup">` 개별 공고 항목 파싱
+- 각 div 내부의 클래스별 정보 추출
+
+### 2. JavaScript 파일 다운로드 URL 추출
+**원인**: 첨부파일이 `href="javascript:file_download('URL')"` 형태로 구현
+
+**해결책**:
+- href 속성에서 JavaScript 함수 호출 패턴 인식
+- 정규표현식으로 실제 다운로드 URL 추출
+- onclick과 href 모두 확인하는 범용 처리
+
+### 3. 한글 파일명 및 크기 정보 처리
+**특징**: 
+- 파일명에 크기 정보 포함: `"교육신청서.hwp(116.5 KB)"`
+- span 태그로 파일명 감싸짐
+
+**해결책**:
+```python
+# span 태그에서 파일명 추출
+span_elem = link.find('span')
+if span_elem:
+    filename = span_elem.get_text(strip=True)
+else:
+    filename = link.get_text(strip=True)
+
+# 크기 정보 제거
+filename = re.sub(r'\s*\([^)]+\)\s*$', '', filename)
+```
+
+## 성능 최적화
+
+### 1. SSL 설정
+```python
+self.verify_ssl = False  # SSL 인증서 문제 해결
+```
+
+### 2. 요청 간격 조절
+```python
+self.delay_between_requests = 1  # 1초 대기
+```
+
+### 3. 타임아웃 설정
+```python
+self.timeout = 30  # 30초 타임아웃
+```
+
+## 테스트 결과
+
+### 1페이지 테스트 (16개 공고)
+- **성공률**: 100% (16/16)
+- **첨부파일**: 5개 (PDF 2개, HWP 3개)
+- **한글 파일명**: 100% (5/5)
+- **총 용량**: 4.44 MB
+
+### 3페이지 테스트 (47개 공고)
+- **성공률**: 100% (47/47)
+- **첨부파일**: 18개
+- **파일 형식**: PDF, HWP 혼재
+- **중복 처리**: 자동 중복 검사 및 스킵
+
+## 재사용 가능한 패턴
+
+### 1. Div 기반 목록 파싱 패턴
+```python
+# 다른 div 기반 사이트에서 재사용 가능
+container = soup.find('div', class_='list-container')
+items = container.find_all('div', class_='item')
+```
+
+### 2. JavaScript 함수 호출 파싱 패턴
+```python
+# download(), fileDown(), 등 다양한 JavaScript 함수에 적용 가능
+js_pattern = onclick if 'function_name' in onclick else href if 'function_name' in href else ''
+match = re.search(r"function_name\(['\"]([^'\"]+)['\"]", js_pattern)
+```
+
+### 3. 날짜 형식 정규화 패턴
+```python
+# YY-MM-DD → YYYY-MM-DD 변환 패턴
+date_match = re.search(r'(\d{2}-\d{1,2}-\d{1,2})', date_text)
+if date_match:
+    date = "20" + date_match.group(1)
+```
+
+## 특별한 기술적 도전과 해결책
+
+### 1. 비표준 HTML 구조 분석
+**도전**: 전통적인 테이블 구조가 아닌 CSS div 레이아웃
+**해결**: Playwright를 사용한 실제 DOM 구조 분석 후 맞춤형 파싱 로직 구현
+
+### 2. JavaScript 기반 다운로드 처리
+**도전**: 직접 링크가 아닌 JavaScript 함수 호출로 파일 다운로드
+**해결**: 정규표현식으로 함수 파라미터에서 실제 다운로드 URL 추출
+
+### 3. 파일명 정보 분리
+**도전**: 파일명에 크기 정보가 포함되어 파일 저장 시 문제
+**해결**: 정규표현식으로 괄호 내 크기 정보 자동 제거
+
+### 4. Enhanced 아키텍처 적용
+**도전**: 기존 BaseScraper에서 Enhanced 패턴으로 전환
+**해결**: 
+- StandardTableScraper 상속으로 공통 기능 활용
+- Fallback 메커니즘으로 설정 없이도 동작
+- 중복 검사 자동화로 안정성 향상
+
+## 적용 가능한 사이트 유형
+
+1. **CSS div 기반 레이아웃 사이트**
+   - 모던 웹 디자인을 사용하는 정부기관
+   - 테이블 대신 div/CSS 그리드 사용하는 사이트
+
+2. **JavaScript 기반 파일 다운로드 사이트**
+   - 보안상 직접 링크 노출을 피하는 사이트
+   - 다운로드 로그 추적이 필요한 사이트
+
+3. **YY-MM-DD 날짜 형식 사이트**
+   - 2자리 연도 표기를 사용하는 한국 사이트
+   - 간소화된 날짜 표시를 선호하는 사이트
+
+## 개발 시사점
+
+1. **DOM 구조 다양성**: 전통적인 테이블 구조 가정을 버리고 실제 구조 분석 필요
+2. **JavaScript 처리**: 단순 href 추출이 아닌 JavaScript 코드 분석 능력 필요
+3. **Enhanced 패턴의 효과**: Fallback 메커니즘으로 개발 시간 단축 및 안정성 확보
+4. **실시간 분석 도구**: Playwright 같은 브라우저 자동화 도구의 중요성
+
+이러한 경험을 통해 GDTP 스크래퍼는 모던 웹 사이트의 복잡한 구조를 처리할 수 있는 견고한 솔루션으로 완성되었습니다.

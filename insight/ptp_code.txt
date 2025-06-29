@@ -1,0 +1,236 @@
+# PTP (포항테크노파크) Enhanced 스크래퍼 개발 인사이트
+
+## 사이트 정보
+- **URL**: https://www.ptp.or.kr/main/board/index.do?menu_idx=113&manage_idx=2
+- **사이트명**: 포항테크노파크 (PTP - Pohang Technopark)
+- **사이트 코드**: ptp
+- **인코딩**: UTF-8
+- **SSL**: 정상 (verify=True)
+
+## 사이트 특성 분석
+
+### 1. 기본 구조
+- **페이지네이션**: GET 파라미터 방식 (`viewPage=2`)
+- **상세 페이지 접근**: JavaScript 함수 기반 (`viewBoard(7245)`)
+- **첨부파일**: `.board-view-attach` 클래스 영역에 정형화된 구조
+- **테이블 구조**: 표준 HTML 테이블 (`<table>` 태그)
+
+### 2. URL 패턴
+```
+목록 페이지: https://www.ptp.or.kr/main/board/index.do?menu_idx=113&manage_idx=2&viewPage=2
+상세 페이지: https://www.ptp.or.kr/main/board/view.do?menu_idx=113&manage_idx=2&board_idx=7245
+첨부파일: https://www.ptp.or.kr/board/boardFile/download/2/7245/12927.do
+```
+
+### 3. 첨부파일 시스템
+PTP 사이트의 가장 특별한 특징은 **정형화된 첨부파일 구조**입니다:
+
+```html
+<div class="board-view-attach">
+    <a href="/board/boardFile/download/2/7245/12927.do">
+        [대구TP] 2025년 3차 과학기술분야RnD 대체인력 모집공고 웹포스터.png(582.0KB)
+    </a>
+    <a href="/board/boardFile/download/2/7245/12928.do">
+        [붙임1] 2025년 과학기술분야 R&D 대체인력 활용 지원사업 3차 모집 공고문.pdf(986.0KB)
+    </a>
+</div>
+```
+
+## 기술적 구현 특징
+
+### 1. JavaScript 링크 처리
+목록 페이지의 제목 링크가 JavaScript 함수로 구현됨:
+
+```python
+# JavaScript onclick에서 board_idx 추출
+onclick = link_elem.get('onclick', '')
+if 'viewBoard' in onclick:
+    match = re.search(r'viewBoard\((\d+)\)', onclick)
+    if match:
+        board_idx = match.group(1)
+        detail_url = f"{self.base_url}/main/board/view.do?menu_idx=113&manage_idx=2&board_idx={board_idx}"
+```
+
+### 2. 첨부파일 특화 파싱
+PTP 사이트만의 독특한 첨부파일 구조를 위한 특화된 파싱 로직:
+
+```python
+def _extract_attachments(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+    """첨부파일 추출 - PTP 사이트 특화"""
+    attachments = []
+    
+    # PTP 사이트는 .board-view-attach 클래스에 첨부파일이 있음
+    attachment_area = soup.find('div', class_='board-view-attach')
+    
+    if attachment_area:
+        file_links = attachment_area.find_all('a')
+        
+        for link in file_links:
+            href = link.get('href', '')
+            link_text = link.get_text(strip=True)
+            
+            # PTP 사이트의 첨부파일 패턴: /board/boardFile/download/2/7245/12927.do
+            if href and '/board/boardFile/download/' in href:
+                file_url = urljoin(self.base_url, href)
+                
+                # 링크 텍스트에서 파일명과 크기 정보 추출
+                # 예: "[대구TP] 2025년 3차 과학기술분야RnD 대체인력 모집공고 웹포스터.png(582.0KB)"
+                if '(' in link_text and ')' in link_text:
+                    # 파일 크기 정보 제거하여 순수 파일명만 추출
+                    file_name = link_text.rsplit('(', 1)[0].strip()
+                else:
+                    file_name = link_text
+```
+
+### 3. GET 요청 기반 처리
+KIAT과 달리 PTP는 GET 요청으로 상세 페이지 접근:
+
+```python
+def process_announcement(self, announcement, index: int, output_base: str = 'output'):
+    """PTP 사이트 특화 공고 처리 - GET 요청"""
+    # GET 요청으로 상세 페이지 가져오기
+    url = announcement['url']
+    response = self.get_page(url)
+    
+    if response:
+        logger.info(f"GET 요청 성공: {url}")
+    else:
+        logger.error(f"GET 요청 실패: {url}")
+```
+
+## 주요 해결책
+
+### 1. 첨부파일 파싱 문제 해결
+**문제**: 초기 구현에서 모든 공고가 동일한 브로슈어 파일만 다운로드됨
+**원인**: 일반적인 첨부파일 패턴으로 파싱하여 사이트 공통 브로슈어 링크를 잘못 추출
+**해결**: PTP 사이트 특화 `.board-view-attach` 클래스 기반 파싱으로 변경
+
+```python
+# 문제가 있던 기존 방식 (일반 패턴)
+file_links = soup.find_all('a', href=re.compile(r'\.(pdf|hwp|doc)$', re.I))
+
+# 해결된 PTP 특화 방식
+attachment_area = soup.find('div', class_='board-view-attach')
+if attachment_area:
+    file_links = attachment_area.find_all('a')
+    for link in file_links:
+        if '/board/boardFile/download/' in href:
+            # 실제 공고별 첨부파일만 추출
+```
+
+### 2. 파일명 크기 정보 제거
+PTP 사이트의 링크 텍스트에는 파일 크기가 포함되어 있어 이를 제거해야 함:
+
+```python
+# 예시: "[대구TP] 모집공고.png(582.0KB)" → "[대구TP] 모집공고.png"
+if '(' in link_text and ')' in link_text:
+    file_name = link_text.rsplit('(', 1)[0].strip()
+```
+
+### 3. 한글 파일명 완벽 지원
+PTP 사이트는 UTF-8 인코딩으로 한글 파일명이 완벽하게 지원됨:
+- 첨부파일 다운로드 시 별도 인코딩 처리 불필요
+- Content-Disposition 헤더에서 한글 파일명 정상 추출
+
+## 테스트 결과
+
+### 3페이지 테스트 결과 (최종)
+```
+총 공고 수: 48개
+성공적 처리: 48개 (100.0%)
+URL 포함 확인: 48개 (100.0%)
+총 첨부파일: 95개
+한글 파일명: 다수 (완벽 지원)
+총 파일 용량: 약 50MB+
+첨부파일 보유 공고: 높은 비율
+스크래핑 품질: 우수 ✅
+```
+
+### 다운로드된 파일 유형
+- **PDF**: 공고문, 신청서, 안내문
+- **HWP/HWPX**: 한글 문서 양식, 신청서
+- **XLSX**: 엑셀 신청 양식
+- **JPG/PNG**: 포스터, 안내 이미지
+- **PPTX**: 발표 자료
+- **ZIP**: 압축된 양식 파일
+
+## 재사용 가능한 패턴
+
+### 1. 정형화된 첨부파일 영역 처리
+```python
+# 특정 클래스 영역에서 첨부파일 추출
+attachment_area = soup.find('div', class_='board-view-attach')
+if attachment_area:
+    # 해당 영역 내의 링크만 처리
+```
+
+### 2. 파일명에서 메타데이터 제거
+```python
+# 파일명에서 크기, 날짜 등 메타데이터 제거
+if '(' in link_text and ')' in link_text:
+    clean_filename = link_text.rsplit('(', 1)[0].strip()
+```
+
+### 3. GET 기반 상세 페이지 접근
+```python
+# JavaScript 함수 파라미터를 URL로 변환
+def get_detail_url(self, board_idx):
+    return f"{self.base_url}/main/board/view.do?menu_idx=113&manage_idx=2&board_idx={board_idx}"
+```
+
+## 특별한 기술적 도전과 해결책
+
+### 1. 첨부파일 URL 패턴 분석
+**도전**: PTP 사이트의 첨부파일 URL 패턴이 독특함
+- 패턴: `/board/boardFile/download/2/7245/12927.do`
+- 숫자의 의미: `2`(게시판ID), `7245`(게시물ID), `12927`(파일ID)
+
+**해결**: 정확한 URL 패턴 매칭으로 실제 첨부파일만 추출
+
+### 2. 브로슈어 vs 실제 첨부파일 구분
+**도전**: 페이지에 사이트 공통 브로슈어와 공고별 첨부파일이 혼재
+**해결**: `.board-view-attach` 클래스 영역만 스캔하여 공고별 첨부파일만 추출
+
+### 3. 페이지네이션 파라미터
+**도전**: 1페이지는 `viewPage` 파라미터 없음, 2페이지부터 `viewPage=2`
+**해결**: 조건부 파라미터 추가 로직
+
+```python
+def get_list_url(self, page_num: int) -> str:
+    params = self.base_params.copy()
+    if page_num > 1:
+        params['viewPage'] = str(page_num)
+    
+    param_str = '&'.join([f"{k}={v}" for k, v in params.items()])
+    return f"{self.base_url}/main/board/index.do?{param_str}"
+```
+
+## 개발 효율성 팁
+
+### 1. 사이트별 특화 vs 일반화
+PTP 사이트는 표준적인 구조를 가지고 있어 다른 테크노파크 사이트에 재사용 가능:
+- 대구TP, 부산TP 등 유사한 구조 예상
+- `.board-view-attach` 패턴은 테크노파크 계열 공통 가능성
+
+### 2. 디버깅 전략
+첨부파일 문제 발생 시:
+1. 실제 HTML 구조 확인: `curl -s "URL" | grep -A 10 -B 10 "첨부"`
+2. 클래스명 패턴 분석: `.board-view-attach`, `.file-area` 등
+3. URL 패턴 매칭: `/board/boardFile/download/` 등
+
+### 3. 성능 최적화
+- 한 번의 GET 요청으로 모든 정보 획득 가능
+- 추가 AJAX 요청 불필요
+- 첨부파일 정보가 상세 페이지에 모두 포함됨
+
+## 결론
+
+PTP 스크래퍼는 **Enhanced 아키텍처의 우수한 사례**입니다:
+
+1. **문제 해결 과정**: 초기 브로슈어 파일 문제를 사이트 특화 파싱으로 해결
+2. **완벽한 한글 지원**: UTF-8 기반 한글 파일명 완벽 지원
+3. **높은 성공률**: 100% 성공률로 48개 공고, 95개 첨부파일 처리
+4. **재사용성**: 테크노파크 계열 사이트에 재사용 가능한 패턴
+5. **안정성**: GET 기반 단순한 요청 구조로 안정적 동작
+
+이 스크래퍼는 향후 유사한 테크노파크 사이트 개발 시 **참조 모델**로 활용할 수 있습니다.

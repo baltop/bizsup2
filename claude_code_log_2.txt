@@ -1,0 +1,250 @@
+Total cost:            $3.14
+Total duration (API):  24m 49.9s
+Total duration (wall): 1h 8m 37.9s
+Total code changes:    1006 lines added, 56 lines removed
+Token usage by model:
+    claude-3-5-haiku:  62.6k input, 3.2k output, 0 cache read, 0 cache write
+       claude-sonnet:  50 input, 28.8k output, 6.4m cache read, 191.1k cache write
+
+
+# Claude Code Log 2 - 스크래퍼 프로젝트 작업 기록
+
+## 작업 일자: 2025년 6월 10일
+
+## 주요 작업 내용
+
+### 1. DCB (부산디자인진흥원) 스크래퍼 파일명 인코딩 문제 해결
+
+#### 문제점
+- DCB 스크래퍼가 PDF 뷰어 링크에서 인코딩된 파일명을 추출하고 있었음
+- 예시: `2886730670_hIFbHidw_2025_EBB680EC82B0_EC9AB0EC8898EAB3B5EAB3B5EB9494EC9E90EC9DB8_EAB5ADECA09CEAB3B5EBAAA8ECA084_EAB2BDEC9F81EAB3B5EBAAA8_EBAAA8ECA791.pdf`
+- 실제로는 `2025 부산 우수공공디자인 국제공모전 경쟁공모 모집.pdf` 이어야 함
+
+#### 해결방법
+- DCB 사이트 구조 재분석 결과 두 가지 파일 다운로드 방식 발견:
+  1. **view-info 섹션**: 올바른 한글 파일명이 있는 다운로드 링크
+  2. **PDF 뷰어**: 인코딩된 파일명을 가진 iframe 링크
+
+#### 수정사항 (dcb_scraper.py:141-178)
+```python
+# 우선 view-info 영역에서 추출
+view_info = soup.find('div', class_='view-info')
+if view_info:
+    info_cont = view_info.find('div', class_='info-cont')
+    if info_cont:
+        file_links = info_cont.find_all('a')
+        for link in file_links:
+            file_url = link.get('href')
+            file_name_span = link.find('span')
+            
+            if file_url and file_name_span:
+                file_url = urljoin(self.base_url, file_url)
+                file_name = file_name_span.get_text(strip=True)
+                
+                attachments.append({
+                    'name': file_name,
+                    'url': file_url
+                })
+```
+
+#### 특이점 및 주의사항
+- DCB 사이트는 첨부파일 정보가 두 곳에 있음:
+  1. `<div class="view-info">` - 정확한 파일명 (우선순위 1)
+  2. `<div class="viewBox">` - PDF 뷰어 링크 (폴백용)
+- 파일 다운로드 URL: `/_Inc/download.php?gb=brd&f_idx={ID}&bcode=B001`
+- PDF 뷰어 URL: `/PDFViewer/web/viewer.html?file={encoded_path}`
+
+### 2. CCI (청주상공회의소) 스크래퍼 신규 구현
+
+#### 사이트 특성
+- **메인 URL**: https://cheongjucci.korcham.net/front/board/boardContentsListPage.do?boardId=10701&menuId=1561
+- **AJAX 기반**: 동적 콘텐츠 로딩 방식
+- **JavaScript 링크**: 상세페이지 접근이 JavaScript 함수 호출 방식
+
+#### 기술적 복잡성
+
+##### AJAX 엔드포인트
+- **목록 API**: `/front/board/boardContentsList.do`
+- **필수 파라미터**: 
+  - boardId=10701
+  - menuId=1561
+  - miv_pageNo={페이지번호}
+  - miv_pageSize=10
+
+##### JavaScript 링크 처리
+- 목록에서 상세페이지 링크가 `javascript:contentsView('116475')` 형태
+- 정규표현식으로 contId 추출: `r"contentsView\('(\d+)'\)"`
+- 상세 URL 구성: `/front/board/boardContentsView.do?contId={ID}&boardId={boardId}&menuId={menuId}`
+
+#### 구현 세부사항 (cci_scraper.py)
+
+##### 목록 파싱 로직 (78-121행)
+```python
+# JavaScript 링크에서 contId 추출
+onclick = title_link.get('href', '')
+if not onclick or onclick == 'javascript:void(0)':
+    onclick = title_link.get('onclick', '')
+
+cont_id_match = re.search(r"contentsView\('(\d+)'\)", onclick)
+if not cont_id_match:
+    print(f"Could not extract contId from: {onclick}")
+    continue
+    
+cont_id = cont_id_match.group(1)
+detail_url = f"{self.detail_base_url}?contId={cont_id}&boardId={self.board_id}&menuId={self.menu_id}"
+```
+
+##### 상세페이지 파싱 로직 (130-220행)
+1. **메타데이터 추출**: `<div class="boardveiw">` 내 테이블에서
+2. **첨부파일 추출**: `<ul class="file_view">` 내 링크들
+3. **본문 추출**: `<td class="td_p">` 내 HTML 콘텐츠
+
+#### 파일 다운로드 특성
+- **직접 링크**: `/file/dext5uploaddata/{년도}/{파일명}`
+- **한글 파일명**: URL 인코딩되어 있지만 제대로 추출됨
+- **다양한 형식**: HWP, PDF, PNG, JPG, ZIP 등
+
+#### 특이점 및 주의사항
+1. **AJAX 의존성**: 일반 페이지 접근으로는 목록을 볼 수 없음
+2. **JavaScript 파싱**: contId 추출이 핵심
+3. **복잡한 HTML**: 상세페이지의 테이블 구조가 복잡함
+4. **인코딩**: UTF-8 기본, 별도 인코딩 처리 불필요
+
+### 3. 메인 시스템 통합
+
+#### tp_scraper.py 수정사항
+1. **import 추가** (35행): `from cci_scraper import CCIScraper`
+2. **choices 확장** (60행): `'cci'` 추가
+3. **사이트 목록 확장** (88행): 'all' 선택시 'cci' 포함
+4. **CCI 처리 로직 추가** (286-309행)
+
+#### 시스템 아키텍처
+```
+tp_scraper.py (메인)
+├── DCBScraper (dcb_scraper.py)
+├── CCIScraper (cci_scraper.py)
+├── BaseScraper (base_scraper.py) - 공통 기능
+└── 기타 스크래퍼들...
+```
+
+### 4. 공통 개발 패턴 및 인사이트
+
+#### 스크래퍼 개발 단계
+1. **사이트 구조 분석**: 개발자 도구로 Network 탭 확인
+2. **HTML 구조 파악**: BeautifulSoup으로 요소 찾기
+3. **AJAX 엔드포인트 발견**: 동적 로딩 방식 확인
+4. **JavaScript 분석**: 링크 생성 방식 파악
+5. **파일 다운로드 테스트**: 실제 다운로드 가능 여부 확인
+
+#### 파일명 인코딩 문제 해결 패턴
+1. **다중 소스 확인**: 여러 위치에서 파일명 추출 시도
+2. **우선순위 설정**: 가장 정확한 소스를 우선 사용
+3. **폴백 메커니즘**: 주 소스 실패시 대체 소스 사용
+4. **인코딩 정리**: sanitize_filename으로 안전한 파일명 생성
+
+#### HTML 파싱 모범 사례
+```python
+# 안전한 요소 찾기
+element = soup.find('div', class_='target_class')
+if element:
+    # 작업 수행
+    pass
+else:
+    print("Element not found")
+    
+# 텍스트 추출시 strip() 사용
+text = element.get_text(strip=True) if element else "N/A"
+
+# 여러 속성 확인
+url = link.get('href') or link.get('onclick', '')
+```
+
+### 5. 추후 변경시 주의사항
+
+#### DCB 스크래퍼 관련
+- `view-info` 구조 변경시 `dcb_scraper.py:142-159` 수정 필요
+- PDF 뷰어 방식 변경시 `dcb_scraper.py:180-193` 확인
+- 파일 다운로드 엔드포인트 변경시: `/_Inc/download.php` 경로
+
+#### CCI 스크래퍼 관련
+- boardId/menuId 변경시 `cci_scraper.py:18-19` 수정
+- AJAX 엔드포인트 변경시 `cci_scraper.py:17` 수정
+- JavaScript 함수명 변경시 정규표현식 `cci_scraper.py:95` 수정
+- 테이블 구조 변경시 파싱 로직 전면 재검토 필요
+
+#### 공통 주의사항
+1. **User-Agent**: 일부 사이트에서 브라우저 헤더 검증
+2. **세션 관리**: 로그인 필요 사이트의 경우 세션 유지
+3. **Rate Limiting**: 요청 간격 조절로 서버 부하 방지
+4. **SSL 인증서**: `verify=False` 설정시 보안 주의
+
+### 6. 테스트 및 검증
+
+#### 테스트 환경
+- Python 3.x 환경
+- 필수 라이브러리: requests, beautifulsoup4, html2text
+- 네트워크 연결 필요
+
+#### 테스트 명령어
+```bash
+# 개별 사이트 테스트
+python tp_scraper.py --site dcb --pages 1
+python tp_scraper.py --site cci --pages 1
+
+# 전체 시스템 테스트
+python tp_scraper.py --site all --pages 1
+```
+
+#### 성공 지표
+1. **목록 파싱**: 예상 개수의 공고 추출
+2. **상세 파싱**: 메타데이터와 본문 내용 존재
+3. **파일 다운로드**: 한글 파일명으로 정상 다운로드
+4. **폴더 구조**: 체계적인 디렉토리 생성
+
+### 7. 현재 지원 사이트 현황
+
+1. **BTP** (부산테크노파크) - 기본 사이트
+2. **ITP** (인천테크노파크) - JavaScript 기반
+3. **CCEI** (충북창조경제혁신센터) - AJAX/JSON API
+4. **KIDP** (한국디자인진흥원) - JavaScript 렌더링
+5. **GSIF** (강릉과학산업진흥원) - Base64 파라미터
+6. **DJBEA** (대전일자리경제진흥원) - SSL 인증서 문제
+7. **MIRE** (환동해산업연구원) - PHP 세션, EUC-KR 인코딩
+8. **DCB** (부산디자인진흥원) - **수정 완료**: 파일명 인코딩 문제 해결
+9. **CCI** (청주상공회의소) - **신규 추가**: AJAX 기반, JavaScript 링크
+10. **JBF** (전남바이오진흥원)
+11. **CEPA** (충남경제진흥원)
+
+### 8. 향후 개선 방향
+
+#### 기술적 개선
+1. **비동기 처리**: asyncio를 활용한 병렬 다운로드
+2. **에러 복구**: 네트워크 오류시 자동 재시도
+3. **캐싱 시스템**: 중복 요청 방지
+4. **로깅 강화**: 상세한 작업 로그
+
+#### 사용성 개선
+1. **GUI 인터페이스**: 웹 또는 데스크톱 UI
+2. **스케줄링**: 정기적 자동 수집
+3. **알림 시스템**: 수집 완료 알림
+4. **통계 대시보드**: 수집 현황 시각화
+
+### 9. 문제 해결 가이드
+
+#### 일반적인 오류
+1. **네트워크 타임아웃**: timeout 값 증가
+2. **SSL 인증서 오류**: verify=False 설정
+3. **인코딩 문제**: 사이트별 인코딩 확인
+4. **JavaScript 오류**: 정규표현식 패턴 재검토
+
+#### 디버깅 팁
+1. **HTML 저장**: 파싱 실패시 원본 HTML 파일로 저장
+2. **단계별 테스트**: 목록→상세→다운로드 순서로 테스트
+3. **로그 활용**: print문으로 중간 결과 확인
+4. **브라우저 비교**: 개발자 도구와 결과 비교
+
+---
+
+## 마무리
+
+DCB의 파일명 인코딩 문제를 해결하고 CCI 스크래퍼를 성공적으로 구현하여 총 11개 사이트를 지원하는 시스템으로 확장되었습니다. 각 사이트의 고유한 특성에 맞춘 맞춤형 솔루션을 제공하며, 한글 파일명 처리와 복잡한 JavaScript 기반 사이트 대응 능력을 갖추게 되었습니다.
