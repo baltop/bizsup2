@@ -178,27 +178,42 @@ hsef,재단법인화성시환경재단,https://www.hsef.or.kr/M000046/S001/fw/bb
 ## 06 27
 
 bokji,한국사회복지협의회,https://www.bokji.net/not/nti/01.bokji
-bokji1,한국사회복지협의회,https://www.bokji.net/not/biz/01.bokji
+    bokji1,한국사회복지협의회,https://www.bokji.net/not/biz/01.bokji
+
+
 kamco,한국자산관리공사,https://www.kamco.or.kr/portal/bbs/list.do?ptIdx=380&mId=0701010000
 kmi,한국해양수산개발원,https://www.kmi.re.kr/web/board/list.do?rbsIdx=68
 kict,한국건설기술연구원,https://www.kict.re.kr/board.es?mid=a10501010000&bid=ntfct
 kist,한국과학기술연구원,https://www.kist.re.kr/ko/notice/general-notice.do
 kodit,신용보증기금,https://www.kodit.co.kr/kodit/na/ntt/selectNttList.do?mi=2638&bbsId=148
+
 kma,한국능률협회,https://www.kma.or.kr/kr/usrs/eduRegMgnt/eduRegMgntForm.do?mkey=24&cateNm=abtNews
 kspo,국민체육진흥공단,https://www.kspo.or.kr/kspo/bbs/B0000027/list.do?menuNo=200149
+
 kea,대한전기협회,https://www.kea.kr/sub_news/notice.php
-kpc,한국생산성본부,https://www.kpc.or.kr/PTWCC002_board_index2.do?type_cd=02
+    kpc,한국생산성본부,https://www.kpc.or.kr/PTWCC002_board_index2.do?type_cd=02     상단 4개만 가져오고 하단 목록은 인식 못함.
 kosa,한국철강협회,https://www.kosa.or.kr/news/sIssue_list_2013.jsp?page=&category=&keyword=
+
+
 sw,한국소프트웨어산업협회,https://www.sw.or.kr/site/sw/ex/board/List.do?cbIdx=292
 kait,한국정보통신진흥협회,https://www.kait.or.kr/user/MainBoardList.do?cateSeq=13&bId=101
 keco,한국환경공단,https://www.keco.or.kr/web/lay1/bbs/S1T10C108/A/18/list.do
 gcgf,경기신용보증재단,https://www.gcgf.or.kr/user/bbs/gcgf/23/157/bbsDataList.do
+
 gnsinbo,경남신용보증재단,https://www.gnsinbo.or.kr/bbs/board.php?bo_table=6_2_1
 ttg,대구신용보증재단,https://www.ttg.co.kr/board/ttg020301
 sinbo,대전신용보증재단,https://www.sinbo.or.kr/sub04_01_01
-icsinbo,인천신용보증재단,https://www.icsinbo.or.kr/home/board/brdList.do?menu_cd=000096
+
+
+    icsinbo,인천신용보증재단,https://www.icsinbo.or.kr/home/board/brdList.do?menu_cd=000096   본문을 못가져옴.
 cbsinbo,충북신용보증재단,https://www.cbsinbo.or.kr/sub.php?code=123
+
+
+
 gwsinbo,강원신용보증재단,https://www.gwsinbo.or.kr/board/board_list.php?board_name=notice
 ulsanshinbo,울산신용보증재단,https://www.ulsanshinbo.co.kr/04_notice/?mcode=0404010000
+
 busansinbo,부산신용보증재단,https://www.busansinbo.or.kr/portal/board/post/list.do?bcIdx=565&mid=0301010000&token=1744696071524
 wbiz,여성기업 종합정보포털(W-BIZ),https://wbiz.or.kr/notice/biz.do
+
+###  06  29
