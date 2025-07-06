@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Enhanced GWTO (강원관광재단) Scraper
-URL: https://www.gwto.or.kr/www/selectBbsNttList.do?bbsNo=3&key=23
-Site Code: gwto
+Enhanced GWCF (강원문화재단) Scraper
+URL: http://www.gwcf.or.kr/ko/culture-business/business-top/business.html?no=1
+Site Code: gwcf
+
+이 사이트는 eGov 프레임워크 기반의 게시판 형태입니다.
+JavaScript를 통해 상세보기 페이지로 이동하며, 첨부파일을 지원합니다.
 """
 
 import os
 import re
 import time
 import requests
-from urllib.parse import urljoin, quote, unquote
+from urllib.parse import urljoin, quote, unquote, urlparse, parse_qs
 from bs4 import BeautifulSoup
 import html2text
 from datetime import datetime
@@ -18,7 +21,7 @@ from pathlib import Path
 import json
 import hashlib
 
-class GWTOScraper:
+class GWCFScraper:
     def __init__(self, base_url, site_code, output_dir="output"):
         self.base_url = base_url
         self.site_code = site_code
@@ -62,11 +65,12 @@ class GWTOScraper:
         self.logger.info(f"Output directory created: {self.output_dir}/{self.site_code}")
     
     def clean_filename(self, filename):
-        """Clean filename for safe file system usage"""
-        # Remove or replace invalid characters
+        """Clean filename for safe file system usage while preserving Korean characters"""
+        # Remove or replace invalid characters but keep Korean characters and common punctuation
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-        filename = re.sub(r'\s+', '_', filename)
-        filename = filename.strip('._')
+        # Replace multiple spaces with single space, don't replace all spaces with underscores
+        filename = re.sub(r'\s+', ' ', filename)
+        filename = filename.strip()
         
         # Limit length
         if len(filename) > 200:
@@ -165,34 +169,96 @@ class GWTOScraper:
         title_hash = self.get_title_hash(title)
         self.current_session_titles.add(title_hash)
     
-    def download_file(self, file_url, notice_dir, original_filename):
+    def download_file(self, file_url, attachments_dir, original_filename):
         """Download attachment file"""
         try:
-            # Get the full URL
+            # Get the full URL - use HTTPS instead of HTTP
             if not file_url.startswith('http'):
-                if file_url.startswith('./'):
-                    file_url = urljoin('https://www.gwto.or.kr/www/', file_url[2:])
-                else:
-                    file_url = urljoin('https://www.gwto.or.kr/www/', file_url)
+                file_url = urljoin('https://www.gwcf.or.kr/', file_url)
+            else:
+                # Convert HTTP to HTTPS
+                file_url = file_url.replace('http://', 'https://')
             
             self.logger.info(f"Downloading file: {file_url}")
             
             response = self.session.get(file_url, stream=True, timeout=30)
             response.raise_for_status()
             
-            # Get filename from header or use original
+            # Get filename from Content-Disposition header
             filename = original_filename
             if 'content-disposition' in response.headers:
                 cd = response.headers['content-disposition']
-                filename_match = re.search(r'filename\*?=[\'"]?([^\'";]+)', cd)
+                self.logger.debug(f"Content-Disposition: {cd}")
+                
+                # Try multiple patterns for filename extraction
+                # Pattern 1: filename="한글파일명.확장자"
+                filename_match = re.search(r'filename\s*=\s*"([^"]+)"', cd)
                 if filename_match:
-                    filename = unquote(filename_match.group(1))
+                    raw_filename = filename_match.group(1)
+                    self.logger.debug(f"Raw filename: {raw_filename}")
+                    
+                    # Try to decode the filename properly
+                    try:
+                        # The filename might be UTF-8 encoded bytes represented as latin-1
+                        filename = raw_filename.encode('latin-1').decode('utf-8')
+                        self.logger.info(f"UTF-8 decoded filename: {filename}")
+                    except (UnicodeDecodeError, UnicodeEncodeError):
+                        try:
+                            # Try EUC-KR encoding
+                            filename = raw_filename.encode('latin-1').decode('euc-kr')
+                            self.logger.info(f"EUC-KR decoded filename: {filename}")
+                        except (UnicodeDecodeError, UnicodeEncodeError):
+                            # If all fails, use the raw filename
+                            filename = raw_filename
+                            self.logger.info(f"Using raw filename: {filename}")
+                else:
+                    # Pattern 2: filename=파일명 (without quotes)
+                    filename_match = re.search(r'filename\s*=\s*([^;]+)', cd)
+                    if filename_match:
+                        filename = filename_match.group(1).strip('\'"')
+                    else:
+                        # Pattern 3: filename*=UTF-8''encoded_filename
+                        filename_match = re.search(r"filename\*\s*=\s*UTF-8''([^;]+)", cd)
+                        if filename_match:
+                            filename = unquote(filename_match.group(1))
+                
+                self.logger.info(f"Final extracted filename: {filename}")
             
-            # Clean filename
+            # If we still don't have a good filename, create one from URL and file info
+            # Only fallback if we really don't have a valid filename with extension
+            if not filename or len(filename.strip()) == 0 or '.' not in filename:
+                # Extract file ID from URL for unique naming
+                file_id_match = re.search(r'FILE_(\d+)', file_url)
+                file_sn_match = re.search(r'fileSn=(\d+)', file_url)
+                
+                if file_id_match and file_sn_match:
+                    filename = f"file_{file_id_match.group(1)}_{file_sn_match.group(1)}"
+                else:
+                    filename = f"attachment_{len(os.listdir(attachments_dir)) + 1}"
+                
+                # Try to detect file type from content-type
+                content_type = response.headers.get('content-type', '').lower()
+                if 'hwp' in content_type:
+                    filename += '.hwp'
+                elif 'pdf' in content_type:
+                    filename += '.pdf'
+                elif 'msword' in content_type or 'wordprocessingml' in content_type:
+                    filename += '.docx' if 'wordprocessingml' in content_type else '.doc'
+                elif 'excel' in content_type or 'spreadsheetml' in content_type:
+                    filename += '.xlsx' if 'spreadsheetml' in content_type else '.xls'
+                elif 'image' in content_type:
+                    if 'jpeg' in content_type:
+                        filename += '.jpg'
+                    elif 'png' in content_type:
+                        filename += '.png'
+                    elif 'gif' in content_type:
+                        filename += '.gif'
+            
+            # Clean filename for safe file system usage
             filename = self.clean_filename(filename)
             
             # Save file
-            file_path = os.path.join(notice_dir, filename)
+            file_path = os.path.join(attachments_dir, filename)
             with open(file_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
@@ -208,83 +274,106 @@ class GWTOScraper:
             self.stats['failed_downloads'] += 1
             return None, 0
     
-    def extract_notice_content(self, detail_soup):
-        """Extract main content from notice detail page"""
-        # Find the content area
-        content_cell = detail_soup.find('td')
-        if not content_cell:
-            return "내용을 찾을 수 없습니다."
+    def extract_notice_list(self, soup):
+        """Extract notice list from the main page"""
+        notices = []
         
-        # Find the content specifically in the row with "내용" header
-        content_row = None
-        for tr in detail_soup.find_all('tr'):
-            th = tr.find('th')
-            if th and '내용' in th.get_text():
-                content_row = tr
-                break
+        # Find the table with notices
+        tbl_body = soup.find('ul', class_='tbl-body')
+        if not tbl_body:
+            self.logger.warning("No notice table found on page")
+            return notices
         
-        if content_row:
-            content_td = content_row.find('td')
-            if content_td:
-                # Convert to markdown
-                content_html = str(content_td)
-                return self.h.handle(content_html).strip()
+        notice_rows = tbl_body.find_all('li', class_='tbl-row')
         
-        return "내용을 찾을 수 없습니다."
+        for row in notice_rows:
+            try:
+                # Extract notice number
+                number_span = row.find('span', class_='col wd45 tc')
+                if not number_span:
+                    continue
+                
+                number_text = number_span.get_text(strip=True)
+                if number_text == '공지' or not number_text.isdigit():
+                    continue  # Skip notice posts
+                
+                # Extract title and form data
+                title_span = row.find('span', class_='list-tit col wdc120 tl dot')
+                if not title_span:
+                    continue
+                
+                form = title_span.find('form')
+                if not form:
+                    continue
+                
+                # Get form data
+                notice_id = form.find('input', {'name': 'nttId'})['value']
+                bbs_id = form.find('input', {'name': 'bbsId'})['value']
+                page_index = form.find('input', {'name': 'pageIndex'})['value']
+                
+                # Get title from link
+                link = form.find('a')
+                if not link:
+                    continue
+                
+                title = link.get_text(strip=True)
+                
+                # Extract date
+                date_span = row.find('span', class_='col wd75 tc')
+                date = date_span.find('span').get_text(strip=True) if date_span else ''
+                
+                # Extract author
+                author_span = row.find('span', class_='col colnone wd12p tc')
+                author = author_span.find('span').get_text(strip=True) if author_span else ''
+                
+                # Extract view count
+                view_span = row.find('span', class_='col colnone wd45 tc')
+                views = view_span.find('span').get_text(strip=True) if view_span else ''
+                
+                notice_data = {
+                    'id': notice_id,
+                    'bbs_id': bbs_id,
+                    'title': title,
+                    'author': author,
+                    'date': date,
+                    'views': views,
+                    'number': number_text
+                }
+                
+                # Check for duplicates
+                if not self.is_title_processed(title):
+                    notices.append(notice_data)
+                else:
+                    self.logger.info(f"중복 공고 스킵: {title[:50]}...")
+                
+            except Exception as e:
+                self.logger.error(f"Error processing notice row: {str(e)}")
+                continue
+        
+        return notices
     
-    def extract_attachments(self, detail_soup):
-        """Extract attachment information from detail page"""
-        attachments = []
-        
-        # Find attachment section
-        file_row = None
-        for tr in detail_soup.find_all('tr'):
-            th = tr.find('th')
-            if th and '파일' in th.get_text():
-                file_row = tr
-                break
-        
-        if file_row:
-            file_td = file_row.find('td')
-            if file_td:
-                # Find all attachment links
-                for link in file_td.find_all('a', href=True):
-                    href = link['href']
-                    filename = link.get_text().strip()
-                    
-                    # Clean filename from link text
-                    filename = re.sub(r'^.*?(\w+\.\w+)$', r'\1', filename)
-                    if not filename or '.' not in filename:
-                        filename = f"attachment_{len(attachments)+1}.bin"
-                    
-                    attachments.append({
-                        'url': href,
-                        'filename': filename
-                    })
-        
-        return attachments
-    
-    def scrape_notice_detail(self, notice_url, notice_title, notice_id):
+    def scrape_notice_detail(self, notice_data):
         """Scrape individual notice detail page"""
         try:
-            # Get full URL
-            if not notice_url.startswith('http'):
-                # Handle relative URLs that start with ./
-                if notice_url.startswith('./'):
-                    detail_url = urljoin('https://www.gwto.or.kr/www/', notice_url[2:])
-                else:
-                    detail_url = urljoin('https://www.gwto.or.kr/www/', notice_url)
-            else:
-                detail_url = notice_url
+            # Construct detail URL
+            detail_url = "http://www.gwcf.or.kr/ko/culture-business/business-top/business.html"
             
-            self.logger.info(f"Scraping notice detail: {detail_url}")
+            # Prepare form data for POST request
+            form_data = {
+                'bbsId': notice_data['bbs_id'],
+                'nttId': notice_data['id'],
+                'pageIndex': '1',
+                'action': 'read'
+            }
             
-            response = self.session.get(detail_url, timeout=30)
+            self.logger.info(f"Scraping notice detail: {notice_data['title'][:50]}...")
+            
+            response = self.session.get(detail_url, params=form_data, timeout=30)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser', from_encoding='utf-8')
             
             # Create notice directory
-            safe_title = self.get_safe_filename(notice_title, notice_id)
+            safe_title = self.get_safe_filename(notice_data['title'], notice_data['id'])
             notice_dir = os.path.join(self.output_dir, self.site_code, safe_title)
             os.makedirs(notice_dir, exist_ok=True)
             
@@ -292,49 +381,77 @@ class GWTOScraper:
             attachments_dir = os.path.join(notice_dir, "attachments")
             os.makedirs(attachments_dir, exist_ok=True)
             
-            # Extract main content
-            content = self.extract_notice_content(soup)
+            # Extract content from boardview-con
+            content_div = soup.find('div', class_='boardview-con')
+            content_html = ""
+            if content_div:
+                content_html = str(content_div)
+            
+            # Convert to markdown
+            content_markdown = self.h.handle(content_html)
+            
+            # Create markdown content
+            full_content = self.create_markdown_content(notice_data, content_markdown, detail_url, form_data)
             
             # Save content as markdown
             content_file = os.path.join(notice_dir, "content.md")
             with open(content_file, 'w', encoding='utf-8') as f:
-                f.write(f"# {notice_title}\n\n")
-                f.write(f"**공고 ID:** {notice_id}\n\n")
-                f.write(f"**URL:** {detail_url}\n\n")
-                f.write(f"**수집 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                f.write("---\n\n")
-                f.write(content)
+                f.write(full_content)
             
-            # Extract and download attachments
-            attachments = self.extract_attachments(soup)
+            # Look for attachments
             downloaded_files = []
+            file_div = soup.find('div', class_='boardview-file')
+            if file_div:
+                # Find attachment links
+                file_links = file_div.find_all('a')
+                for link in file_links:
+                    file_url = link.get('href', '')
+                    if file_url:
+                        filename = link.get_text(strip=True)
+                        if filename:
+                            downloaded_file, file_size = self.download_file(file_url, attachments_dir, filename)
+                            if downloaded_file:
+                                downloaded_files.append((downloaded_file, file_size))
             
-            for attachment in attachments:
-                filename, file_size = self.download_file(
-                    attachment['url'], 
-                    attachments_dir, 
-                    attachment['filename']
-                )
-                if filename:
-                    downloaded_files.append({
-                        'filename': filename,
-                        'size': file_size
-                    })
-            
-            self.logger.info(f"Notice '{notice_title}' processed successfully. Content saved, {len(downloaded_files)} files downloaded.")
+            self.logger.info(f"Notice '{notice_data['title']}' processed successfully. Downloaded {len(downloaded_files)} files.")
             self.stats['total_notices'] += 1
             
             # Add to processed titles
-            self.add_processed_title(notice_title)
+            self.add_processed_title(notice_data['title'])
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to scrape notice detail {notice_url}: {str(e)}")
+            self.logger.error(f"Failed to scrape notice {notice_data['id']}: {str(e)}")
             return False
     
-    def scrape_notice_list(self, page_url):
-        """Scrape notice list page"""
+    def create_markdown_content(self, notice_data, content_markdown, detail_url, form_data):
+        """Create markdown content from notice data"""
+        content = f"# {notice_data['title']}\n\n"
+        content += f"**공고 ID:** {notice_data['id']}\n\n"
+        content += f"**게시판 ID:** {notice_data['bbs_id']}\n\n"
+        content += f"**작성자:** {notice_data['author']}\n\n"
+        content += f"**작성일:** {notice_data['date']}\n\n"
+        content += f"**조회수:** {notice_data['views']}\n\n"
+        
+        # Construct detail URL with parameters
+        url_params = '&'.join([f"{k}={v}" for k, v in form_data.items()])
+        full_url = f"{detail_url}?{url_params}"
+        content += f"**URL:** {full_url}\n\n"
+        
+        content += f"**수집 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        content += "---\n\n"
+        
+        # Add main content
+        if content_markdown.strip():
+            content += content_markdown
+        else:
+            content += "내용이 없습니다.\n"
+        
+        return content
+    
+    def scrape_page(self, page_url):
+        """Scrape business announcement page"""
         try:
             self.logger.info(f"Scraping page: {page_url}")
             
@@ -342,43 +459,8 @@ class GWTOScraper:
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser', from_encoding='utf-8')
             
-            # Find notice table
-            notice_table = soup.find('table', class_='p-table')
-            if not notice_table:
-                self.logger.warning("No notice table found")
-                return []
-            
-            notices = []
-            tbody = notice_table.find('tbody')
-            if tbody:
-                for row in tbody.find_all('tr'):
-                    # Extract notice information
-                    cells = row.find_all('td')
-                    if len(cells) >= 4:
-                        # Find title link
-                        title_cell = cells[1]  # Second column is title
-                        title_link = title_cell.find('a', href=True)
-                        
-                        if title_link:
-                            title = title_link.get_text().strip()
-                            title = re.sub(r'\s+', ' ', title)  # Clean whitespace
-                            notice_url = title_link['href']
-                            
-                            # Extract notice ID from URL
-                            notice_id_match = re.search(r'nttNo=(\d+)', notice_url)
-                            notice_id = notice_id_match.group(1) if notice_id_match else 'unknown'
-                            
-                            notice_data = {
-                                'title': title,
-                                'url': notice_url,
-                                'id': notice_id
-                            }
-                            
-                            # Check for duplicates
-                            if not self.is_title_processed(title):
-                                notices.append(notice_data)
-                            else:
-                                self.logger.info(f"중복 공고 스킵: {title[:50]}...")
+            # Extract notice list
+            notices = self.extract_notice_list(soup)
             
             self.logger.info(f"Found {len(notices)} notices on this page")
             return notices
@@ -400,10 +482,14 @@ class GWTOScraper:
             if page_num == 1:
                 page_url = self.base_url
             else:
-                page_url = f"{self.base_url}&pageIndex={page_num}"
+                # Use JavaScript function format for pagination
+                if '?' in self.base_url:
+                    page_url = f"{self.base_url}&pageIndex={page_num}"
+                else:
+                    page_url = f"{self.base_url}?pageIndex={page_num}"
             
             # Get notice list
-            notices = self.scrape_notice_list(page_url)
+            notices = self.scrape_page(page_url)
             
             if not notices:
                 self.logger.warning(f"No notices found on page {page_num}")
@@ -412,7 +498,7 @@ class GWTOScraper:
             # Process each notice
             for i, notice in enumerate(notices, 1):
                 self.logger.info(f"\nProcessing notice {i}/{len(notices)}: {notice['title'][:50]}...")
-                success = self.scrape_notice_detail(notice['url'], notice['title'], notice['id'])
+                success = self.scrape_notice_detail(notice)
                 
                 if success:
                     self.logger.info(f"✓ Successfully processed notice {notice['id']}")
@@ -420,7 +506,7 @@ class GWTOScraper:
                     self.logger.error(f"✗ Failed to process notice {notice['id']}")
                 
                 # Add delay between requests
-                time.sleep(1)
+                time.sleep(0.5)
             
             self.stats['pages_processed'] += 1
             
@@ -479,12 +565,12 @@ class GWTOScraper:
 
 def main():
     # Configuration
-    base_url = "https://www.gwto.or.kr/www/selectBbsNttList.do?bbsNo=3&key=23"
-    site_code = "gwto"
+    base_url = "http://www.gwcf.or.kr/ko/culture-business/business-top/business.html?no=1"
+    site_code = "gwcf"
     max_pages = 3
     
     # Initialize scraper
-    scraper = GWTOScraper(base_url, site_code)
+    scraper = GWCFScraper(base_url, site_code)
     
     try:
         # Start scraping

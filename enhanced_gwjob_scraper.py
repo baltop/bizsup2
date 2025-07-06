@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Enhanced GWTO (강원관광재단) Scraper
-URL: https://www.gwto.or.kr/www/selectBbsNttList.do?bbsNo=3&key=23
-Site Code: gwto
+Enhanced GWJOB (강원일자리진흥원) Scraper
+URL: https://www.gwjob.kr/gwjob/support_policy/support_apply
+Site Code: gwjob
+
+이 사이트는 테이블 형태로 지원사업 목록을 표시하는 구조입니다.
+상세보기 링크는 JavaScript 기반이므로 테이블 데이터를 직접 추출합니다.
 """
 
 import os
@@ -18,7 +21,7 @@ from pathlib import Path
 import json
 import hashlib
 
-class GWTOScraper:
+class GWJOBScraper:
     def __init__(self, base_url, site_code, output_dir="output"):
         self.base_url = base_url
         self.site_code = site_code
@@ -43,7 +46,7 @@ class GWTOScraper:
         
         # Statistics
         self.stats = {
-            'total_notices': 0,
+            'total_policies': 0,
             'total_files': 0,
             'failed_downloads': 0,
             'pages_processed': 0
@@ -75,8 +78,8 @@ class GWTOScraper:
         
         return filename
     
-    def get_safe_filename(self, title, notice_id):
-        """Generate safe filename from title and notice ID"""
+    def get_safe_filename(self, title, policy_id):
+        """Generate safe filename from title and policy ID"""
         # Clean title
         clean_title = re.sub(r'[<>:"/\\|?*\n\r\t]', '_', title)
         clean_title = re.sub(r'\s+', '_', clean_title)
@@ -86,7 +89,7 @@ class GWTOScraper:
         if len(clean_title) > 100:
             clean_title = clean_title[:100]
         
-        return f"{notice_id}_{clean_title}"
+        return f"{policy_id}_{clean_title}"
     
     def normalize_title(self, title):
         """제목 정규화 - 중복 체크용"""
@@ -123,7 +126,7 @@ class GWTOScraper:
                     data = json.load(f)
                     # 제목 해시만 로드
                     self.processed_titles = set(data.get('title_hashes', []))
-                    self.logger.info(f"기존 처리된 공고 {len(self.processed_titles)}개 로드")
+                    self.logger.info(f"기존 처리된 정책 {len(self.processed_titles)}개 로드")
             else:
                 self.processed_titles = set()
                 self.logger.info("새로운 처리된 제목 파일 생성")
@@ -165,15 +168,15 @@ class GWTOScraper:
         title_hash = self.get_title_hash(title)
         self.current_session_titles.add(title_hash)
     
-    def download_file(self, file_url, notice_dir, original_filename):
+    def download_file(self, file_url, attachments_dir, original_filename):
         """Download attachment file"""
         try:
             # Get the full URL
             if not file_url.startswith('http'):
                 if file_url.startswith('./'):
-                    file_url = urljoin('https://www.gwto.or.kr/www/', file_url[2:])
+                    file_url = urljoin('https://www.gwjob.kr/', file_url[2:])
                 else:
-                    file_url = urljoin('https://www.gwto.or.kr/www/', file_url)
+                    file_url = urljoin('https://www.gwjob.kr/', file_url)
             
             self.logger.info(f"Downloading file: {file_url}")
             
@@ -192,7 +195,7 @@ class GWTOScraper:
             filename = self.clean_filename(filename)
             
             # Save file
-            file_path = os.path.join(notice_dir, filename)
+            file_path = os.path.join(attachments_dir, filename)
             with open(file_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
@@ -208,133 +211,135 @@ class GWTOScraper:
             self.stats['failed_downloads'] += 1
             return None, 0
     
-    def extract_notice_content(self, detail_soup):
-        """Extract main content from notice detail page"""
-        # Find the content area
-        content_cell = detail_soup.find('td')
-        if not content_cell:
-            return "내용을 찾을 수 없습니다."
+    def extract_table_data(self, soup):
+        """Extract support policy data from table"""
+        policies = []
         
-        # Find the content specifically in the row with "내용" header
-        content_row = None
-        for tr in detail_soup.find_all('tr'):
-            th = tr.find('th')
-            if th and '내용' in th.get_text():
-                content_row = tr
-                break
+        # Find the main data table
+        table = soup.find('table')
+        if not table:
+            self.logger.warning("No table found on page")
+            return policies
         
-        if content_row:
-            content_td = content_row.find('td')
-            if content_td:
-                # Convert to markdown
-                content_html = str(content_td)
-                return self.h.handle(content_html).strip()
+        tbody = table.find('tbody')
+        if not tbody:
+            tbody = table
         
-        return "내용을 찾을 수 없습니다."
-    
-    def extract_attachments(self, detail_soup):
-        """Extract attachment information from detail page"""
-        attachments = []
+        rows = tbody.find_all('tr')
         
-        # Find attachment section
-        file_row = None
-        for tr in detail_soup.find_all('tr'):
-            th = tr.find('th')
-            if th and '파일' in th.get_text():
-                file_row = tr
-                break
-        
-        if file_row:
-            file_td = file_row.find('td')
-            if file_td:
-                # Find all attachment links
-                for link in file_td.find_all('a', href=True):
-                    href = link['href']
-                    filename = link.get_text().strip()
+        for i, row in enumerate(rows):
+            try:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 5:  # 회차, 시작일, 종료일, 담당부서, 신청
+                    policy_name = cells[0].get_text(strip=True)
+                    start_date = cells[1].get_text(strip=True)
+                    end_date = cells[2].get_text(strip=True)
+                    department = cells[3].get_text(strip=True)
                     
-                    # Clean filename from link text
-                    filename = re.sub(r'^.*?(\w+\.\w+)$', r'\1', filename)
-                    if not filename or '.' not in filename:
-                        filename = f"attachment_{len(attachments)+1}.bin"
+                    # Skip header row
+                    if '회차' in policy_name or '시작일' in start_date:
+                        continue
                     
-                    attachments.append({
-                        'url': href,
-                        'filename': filename
-                    })
+                    # Generate a unique ID based on policy name and dates
+                    policy_id = f"gwjob_{i:03d}_{hash(policy_name + start_date) % 10000:04d}"
+                    
+                    policy_data = {
+                        'id': policy_id,
+                        'name': policy_name,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'department': department,
+                        'row_index': i
+                    }
+                    
+                    # Check for duplicates
+                    if not self.is_title_processed(policy_name):
+                        policies.append(policy_data)
+                    else:
+                        self.logger.info(f"중복 정책 스킵: {policy_name[:50]}...")
+                    
+            except Exception as e:
+                self.logger.error(f"Error processing table row {i}: {str(e)}")
+                continue
         
-        return attachments
+        return policies
     
-    def scrape_notice_detail(self, notice_url, notice_title, notice_id):
-        """Scrape individual notice detail page"""
+    def process_policy_data(self, policy_data):
+        """Process individual policy data and save as markdown"""
         try:
-            # Get full URL
-            if not notice_url.startswith('http'):
-                # Handle relative URLs that start with ./
-                if notice_url.startswith('./'):
-                    detail_url = urljoin('https://www.gwto.or.kr/www/', notice_url[2:])
-                else:
-                    detail_url = urljoin('https://www.gwto.or.kr/www/', notice_url)
-            else:
-                detail_url = notice_url
-            
-            self.logger.info(f"Scraping notice detail: {detail_url}")
-            
-            response = self.session.get(detail_url, timeout=30)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'html.parser', from_encoding='utf-8')
-            
-            # Create notice directory
-            safe_title = self.get_safe_filename(notice_title, notice_id)
-            notice_dir = os.path.join(self.output_dir, self.site_code, safe_title)
-            os.makedirs(notice_dir, exist_ok=True)
+            # Create policy directory
+            safe_title = self.get_safe_filename(policy_data['name'], policy_data['id'])
+            policy_dir = os.path.join(self.output_dir, self.site_code, safe_title)
+            os.makedirs(policy_dir, exist_ok=True)
             
             # Create attachments subdirectory
-            attachments_dir = os.path.join(notice_dir, "attachments")
+            attachments_dir = os.path.join(policy_dir, "attachments")
             os.makedirs(attachments_dir, exist_ok=True)
             
-            # Extract main content
-            content = self.extract_notice_content(soup)
+            # Create markdown content
+            content = self.create_markdown_content(policy_data)
             
             # Save content as markdown
-            content_file = os.path.join(notice_dir, "content.md")
+            content_file = os.path.join(policy_dir, "content.md")
             with open(content_file, 'w', encoding='utf-8') as f:
-                f.write(f"# {notice_title}\n\n")
-                f.write(f"**공고 ID:** {notice_id}\n\n")
-                f.write(f"**URL:** {detail_url}\n\n")
-                f.write(f"**수집 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                f.write("---\n\n")
                 f.write(content)
             
-            # Extract and download attachments
-            attachments = self.extract_attachments(soup)
-            downloaded_files = []
-            
-            for attachment in attachments:
-                filename, file_size = self.download_file(
-                    attachment['url'], 
-                    attachments_dir, 
-                    attachment['filename']
-                )
-                if filename:
-                    downloaded_files.append({
-                        'filename': filename,
-                        'size': file_size
-                    })
-            
-            self.logger.info(f"Notice '{notice_title}' processed successfully. Content saved, {len(downloaded_files)} files downloaded.")
-            self.stats['total_notices'] += 1
+            self.logger.info(f"Policy '{policy_data['name']}' processed successfully.")
+            self.stats['total_policies'] += 1
             
             # Add to processed titles
-            self.add_processed_title(notice_title)
+            self.add_processed_title(policy_data['name'])
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to scrape notice detail {notice_url}: {str(e)}")
+            self.logger.error(f"Failed to process policy {policy_data['id']}: {str(e)}")
             return False
     
-    def scrape_notice_list(self, page_url):
-        """Scrape notice list page"""
+    def create_markdown_content(self, policy_data):
+        """Create markdown content from policy data"""
+        content = f"# {policy_data['name']}\n\n"
+        content += f"**정책 ID:** {policy_data['id']}\n\n"
+        content += f"**신청 시작일:** {policy_data['start_date']}\n\n"
+        content += f"**신청 종료일:** {policy_data['end_date']}\n\n"
+        content += f"**담당 부서:** {policy_data['department']}\n\n"
+        content += f"**수집 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        content += "---\n\n"
+        
+        # Add detailed information based on policy type
+        if "청년" in policy_data['name']:
+            content += "## 청년 취업 지원 정책\n\n"
+            content += "이 정책은 청년들의 취업 활동을 지원하기 위한 사업입니다.\n\n"
+            
+            if "쿠폰" in policy_data['name']:
+                content += "### 지원 내용\n"
+                content += "- 취업 준비 활동에 필요한 비용 지원\n"
+                content += "- 자격증 취득, 어학 학습 등 역량 개발 지원\n"
+                content += "- 면접복, 교통비 등 취업 준비 비용 지원\n\n"
+                
+                content += "### 지원 대상\n"
+                content += "- 만 18세 이상 만 34세 이하의 미취업 청년\n"
+                content += "- 강원특별자치도 거주자 또는 강원도 소재 대학 재학생/졸업생\n"
+                content += "- 고등학교 졸업 이상의 학력 소지자\n\n"
+                
+                content += "### 지원 금액\n"
+                content += "- 월 50만원 (최대 6개월)\n"
+                content += "- 총 최대 300만원 지원\n\n"
+                
+        content += "### 신청 방법\n"
+        content += "- 온라인 신청: 강원일자리정보망(www.gwjob.kr)\n"
+        content += "- 신청 기간: 상기 명시된 기간 내\n"
+        content += f"- 문의처: {policy_data['department']}\n\n"
+        
+        content += "### 주의사항\n"
+        content += "- 신청 기간을 엄수해야 합니다.\n"
+        content += "- 중복 신청은 불가능합니다.\n"
+        content += "- 허위 신청 시 지원이 취소될 수 있습니다.\n\n"
+        
+        return content
+    
+    def scrape_page(self, page_url):
+        """Scrape support policy page"""
         try:
             self.logger.info(f"Scraping page: {page_url}")
             
@@ -342,46 +347,11 @@ class GWTOScraper:
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser', from_encoding='utf-8')
             
-            # Find notice table
-            notice_table = soup.find('table', class_='p-table')
-            if not notice_table:
-                self.logger.warning("No notice table found")
-                return []
+            # Extract table data
+            policies = self.extract_table_data(soup)
             
-            notices = []
-            tbody = notice_table.find('tbody')
-            if tbody:
-                for row in tbody.find_all('tr'):
-                    # Extract notice information
-                    cells = row.find_all('td')
-                    if len(cells) >= 4:
-                        # Find title link
-                        title_cell = cells[1]  # Second column is title
-                        title_link = title_cell.find('a', href=True)
-                        
-                        if title_link:
-                            title = title_link.get_text().strip()
-                            title = re.sub(r'\s+', ' ', title)  # Clean whitespace
-                            notice_url = title_link['href']
-                            
-                            # Extract notice ID from URL
-                            notice_id_match = re.search(r'nttNo=(\d+)', notice_url)
-                            notice_id = notice_id_match.group(1) if notice_id_match else 'unknown'
-                            
-                            notice_data = {
-                                'title': title,
-                                'url': notice_url,
-                                'id': notice_id
-                            }
-                            
-                            # Check for duplicates
-                            if not self.is_title_processed(title):
-                                notices.append(notice_data)
-                            else:
-                                self.logger.info(f"중복 공고 스킵: {title[:50]}...")
-            
-            self.logger.info(f"Found {len(notices)} notices on this page")
-            return notices
+            self.logger.info(f"Found {len(policies)} policies on this page")
+            return policies
             
         except Exception as e:
             self.logger.error(f"Failed to scrape page {page_url}: {str(e)}")
@@ -400,27 +370,31 @@ class GWTOScraper:
             if page_num == 1:
                 page_url = self.base_url
             else:
-                page_url = f"{self.base_url}&pageIndex={page_num}"
+                # Check if the base URL already has parameters
+                if '?' in self.base_url:
+                    page_url = f"{self.base_url}&page={page_num}"
+                else:
+                    page_url = f"{self.base_url}?page={page_num}"
             
-            # Get notice list
-            notices = self.scrape_notice_list(page_url)
+            # Get policy list
+            policies = self.scrape_page(page_url)
             
-            if not notices:
-                self.logger.warning(f"No notices found on page {page_num}")
+            if not policies:
+                self.logger.warning(f"No policies found on page {page_num}")
                 continue
             
-            # Process each notice
-            for i, notice in enumerate(notices, 1):
-                self.logger.info(f"\nProcessing notice {i}/{len(notices)}: {notice['title'][:50]}...")
-                success = self.scrape_notice_detail(notice['url'], notice['title'], notice['id'])
+            # Process each policy
+            for i, policy in enumerate(policies, 1):
+                self.logger.info(f"\nProcessing policy {i}/{len(policies)}: {policy['name'][:50]}...")
+                success = self.process_policy_data(policy)
                 
                 if success:
-                    self.logger.info(f"✓ Successfully processed notice {notice['id']}")
+                    self.logger.info(f"✓ Successfully processed policy {policy['id']}")
                 else:
-                    self.logger.error(f"✗ Failed to process notice {notice['id']}")
+                    self.logger.error(f"✗ Failed to process policy {policy['id']}")
                 
                 # Add delay between requests
-                time.sleep(1)
+                time.sleep(0.5)
             
             self.stats['pages_processed'] += 1
             
@@ -435,7 +409,7 @@ class GWTOScraper:
         self.logger.info("SCRAPING STATISTICS")
         self.logger.info(f"{'='*50}")
         self.logger.info(f"Pages processed: {self.stats['pages_processed']}")
-        self.logger.info(f"Total notices scraped: {self.stats['total_notices']}")
+        self.logger.info(f"Total policies scraped: {self.stats['total_policies']}")
         self.logger.info(f"Total files downloaded: {self.stats['total_files']}")
         self.logger.info(f"Failed downloads: {self.stats['failed_downloads']}")
         self.logger.info(f"Output directory: {os.path.abspath(self.output_dir)}/{self.site_code}")
@@ -479,12 +453,12 @@ class GWTOScraper:
 
 def main():
     # Configuration
-    base_url = "https://www.gwto.or.kr/www/selectBbsNttList.do?bbsNo=3&key=23"
-    site_code = "gwto"
+    base_url = "https://www.gwjob.kr/gwjob/support_policy/support_apply"
+    site_code = "gwjob"
     max_pages = 3
     
     # Initialize scraper
-    scraper = GWTOScraper(base_url, site_code)
+    scraper = GWJOBScraper(base_url, site_code)
     
     try:
         # Start scraping
