@@ -191,3 +191,4 @@ conf/
 node_modules/
 
 test/
+*.tgz
