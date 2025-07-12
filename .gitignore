@@ -180,6 +180,9 @@ output/
 **/.claude/settings.local.json
 uv.lock
 
+
+mobile/
+
 output*/
 
 page/
