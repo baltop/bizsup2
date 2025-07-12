@@ -1,3 +1,5 @@
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/baltop/bizsup2?utm_source=oss&utm_medium=github&utm_campaign=baltop%2Fbizsup2&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 # 지원사업 공고 수집 프로그램
 
 여러 기관의 지원사업 공고를 자동으로 수집하는 웹 스크래퍼 프로그램입니다.
