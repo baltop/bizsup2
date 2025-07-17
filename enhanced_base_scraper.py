@@ -248,10 +248,11 @@ class EnhancedBaseScraper(ABC):
                 )
                 response.raise_for_status()
                 
-                # 실제 파일명 추출
-                actual_filename = self._extract_filename(response, save_path)
-                if actual_filename != save_path:
-                    save_path = actual_filename
+                # 실제 파일명 추출 (attachment_info가 있으면 해당 파일명 우선 사용)
+                if not attachment_info:
+                    actual_filename = self._extract_filename(response, save_path)
+                    if actual_filename != save_path:
+                        save_path = actual_filename
                 
                 # 디렉토리 생성 보장
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
