@@ -762,12 +762,16 @@ class EnhancedBaseScraper(ABC):
     
     def _setup_interrupt_handler(self):
         """Ctrl+C 인터럽트 핸들러 설정"""
-        def signal_handler(signum, frame):
-            logger.info("중단 신호를 받았습니다. 안전하게 종료됩니다...")
-            self._interrupted = True
-        
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        try:
+            def signal_handler(signum, frame):
+                logger.info("중단 신호를 받았습니다. 안전하게 종료됩니다...")
+                self._interrupted = True
+            
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+        except ValueError:
+            # signal은 메인 스레드에서만 작동하므로 무시
+            logger.debug("Signal handler는 메인 스레드에서만 설정할 수 있습니다.")
     
     def _print_final_stats(self, processed_count: int, early_stop: bool, stop_reason: str):
         """최종 통계 출력"""
