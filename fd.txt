@@ -1,0 +1,226 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: /home/baltop/work/python/bizsup2           │
+╰───────────────────────────────────────────────────╯
+
+
+ What's new:
+  • Hooks: Added UserPromptSubmit hook and the current working directory to hook inputs
+  • Custom slash commands: Added argument-hint to frontmatter
+  • Windows: OAuth uses port 45454 and properly constructs browser URL
+  • Windows: mode switching now uses alt + m, and plan mode renders properly
+  • Shell: Switch to in-memory shell snapshot to fix file-related errors
+
+> @scraper_manager.py 파일을 검터해 보고 개발자가 향후 유지보수하는데 도움이 되는 개발자 매뉴얼을 작성해줘. md파일로 작성해줘.
+  ⎿  Read scraper_manager.py (445 lines)
+
+● Scraper Manager 개발자 매뉴얼
+
+  개요
+
+  scraper_manager.py는 여러 Enhanced 스크래퍼를 병렬로 실행하고 관리하는 Python 애플리케이션입니다. 이 시스템은 대량의 웹 스크래핑 작업을 효율적으로 처리하기 위해 설계되었습니다.
+
+  주요 기능
+
+  1. 병렬 스크래퍼 실행
+
+  - ThreadPoolExecutor 기반 병렬 처리
+  - 최대 30개 워커로 동시 실행 가능
+  - 메모리 효율적인 작업 스케줄링
+
+  2. 스크래퍼 관리
+
+  - enhanced_*_scraper.py 패턴의 스크래퍼 자동 탐지
+  - 동적 클래스 로딩 및 인스턴스 생성
+  - 스크래퍼별 독립적인 출력 디렉토리 관리
+
+  3. 중복 실행 방지
+
+  - 락 파일(locks/*.lock) 기반 중복 실행 방지
+  - 5분 이상 된 stale 락 파일 자동 정리
+  - PID 및 시작 시간 추적
+
+  핵심 클래스: ScraperManager
+
+  초기화 매개변수
+
+  ScraperManager(output_base_dir="output", max_pages=3, max_workers=30)
+
+  - output_base_dir: 스크래핑 결과 저장 기본 디렉토리
+  - max_pages: 각 스크래퍼가 처리할 최대 페이지 수
+  - max_workers: 동시 실행 가능한 최대 워커 수
+
+  주요 메서드
+
+  get_available_scrapers() -> List[str]
+
+  - enhanced_*_scraper.py 패턴으로 스크래퍼 파일 탐지
+  - enhanced_base_scraper.py, enhanced_async_scraper.py 제외
+  - 알파벳 순 정렬된 목록 반환
+
+  load_scraper_class(scraper_file: str)
+
+  - 동적 모듈 import 및 클래스 로딩
+  - 클래스명 패턴 매칭: Enhanced{SiteCode}Scraper
+  - 여러 naming convention 지원 (대소문자 변형)
+
+  run_single_scraper(scraper_file: str) -> Dict[str, Any]
+
+  - 개별 스크래퍼 실행 및 결과 수집
+  - 실행 통계 및 오류 정보 수집
+  - 락 파일 관리 (생성/삭제)
+
+  run_parallel_scrapers(scraper_count: int = 30)
+
+  - 지정된 개수만큼 스크래퍼 병렬 실행
+  - 실시간 진행률 모니터링
+  - 완료 후 실행 결과 요약
+
+  run_all_scrapers(batch_size: int = 30)
+
+  - 모든 스크래퍼를 배치 단위로 순차 실행
+  - 시스템 리소스 부하 분산
+  - 배치간 5초 대기 시간
+
+  락 파일 시스템
+
+  락 파일 구조
+
+  {
+    "pid": 12345,
+    "start_time": "2023-12-01T10:30:00.000000",
+    "site_code": "kidp"
+  }
+
+  락 파일 관리
+
+  - 파일 위치: locks/{site_code}.lock
+  - 자동 정리: 5분 이상 된 파일
+  - 손상된 파일 자동 삭제
+
+  결과 데이터 구조
+
+  {
+      'site_code': 'kidp',
+      'scraper_file': 'enhanced_kidp_scraper.py',
+      'status': 'completed',  # completed/failed/skipped
+      'output_dir': 'output/kidp',
+      'start_time': datetime,
+      'end_time': datetime,
+      'duration': 45.2,
+      'error': None,
+      'stats': {
+          'total_posts': 150,
+          'files_downloaded': 75
+      }
+  }
+
+  명령행 인터페이스
+
+  기본 사용법
+
+  python scraper_manager.py [options]
+
+  주요 옵션
+
+  - --output-dir, -o: 출력 디렉토리 지정 (기본값: output)
+  - --pages, -p: 수집 페이지 수 (기본값: 3)
+  - --count, -c: 실행할 스크래퍼 개수 (기본값: 30)
+  - --workers, -w: 최대 동시 워커 수 (기본값: 30)
+  - --list, -l: 사용 가능한 스크래퍼 목록 출력
+  - --all, -a: 모든 스크래퍼 배치 실행
+  - --batch-size, -b: 배치 크기 (기본값: 30)
+
+  사용 예시
+
+  # 스크래퍼 목록 확인
+  python scraper_manager.py --list
+
+  # 30개 스크래퍼 병렬 실행
+  python scraper_manager.py --count 30 --pages 5
+
+  # 모든 스크래퍼를 20개씩 배치로 실행
+  python scraper_manager.py --all --batch-size 20
+
+  로깅 시스템
+
+  로그 설정
+
+  - 콘솔 및 파일(scraper_manager.log) 동시 출력
+  - UTF-8 인코딩으로 한글 지원
+  - 상세한 진행률 및 오류 정보 기록
+
+  로그 레벨
+
+  - INFO: 일반적인 실행 정보
+  - WARNING: 경고 및 락 파일 정리
+  - ERROR: 실행 오류 및 예외 상황
+  - DEBUG: 상세한 디버깅 정보
+
+  성능 최적화 고려사항
+
+  메모리 관리
+
+  - 스크래퍼별 독립적인 프로세스 공간
+  - 완료된 작업의 즉시 메모리 해제
+  - 배치 처리로 메모리 사용량 제한
+
+  네트워크 효율성
+
+  - 병렬 요청으로 전체 처리 시간 단축
+  - 사이트별 독립적인 세션 관리
+  - 적절한 요청 간격 유지
+
+  에러 처리
+
+  - 개별 스크래퍼 실패가 전체에 영향 없음
+  - 자동 재시도 및 복구 메커니즘
+  - 상세한 오류 로깅 및 추적
+
+  확장 및 커스터마이징
+
+  새로운 스크래퍼 추가
+
+  1. enhanced_{site_code}_scraper.py 파일 생성
+  2. Enhanced{SiteCode}Scraper 클래스 구현
+  3. EnhancedBaseScraper 상속 필수
+
+  설정 커스터마이징
+
+  - 워커 수, 페이지 수, 출력 디렉토리 조정 가능
+  - 락 파일 만료 시간 수정 (현재 5분)
+  - 배치 크기 및 대기 시간 조정
+
+  트러블슈팅
+
+  일반적인 문제
+
+  1. 스크래퍼를 찾을 수 없음: 파일명 패턴 확인
+  2. 클래스 로드 실패: 클래스명 convention 확인
+  3. 락 파일 오류: locks/ 디렉토리 권한 확인
+  4. 메모리 부족: 워커 수 및 배치 크기 조정
+
+  디버깅 팁
+
+  - --list 옵션으로 스크래퍼 탐지 확인
+  - 로그 파일에서 상세한 오류 정보 확인
+  - 개별 스크래퍼 단독 실행으로 문제 격리
+
+  보안 고려사항
+
+  파일 시스템 보안
+
+  - 출력 디렉토리 권한 관리
+  - 락 파일 무결성 검증
+  - 임시 파일 자동 정리
+
+  네트워크 보안
+
+  - User-Agent 및 헤더 관리
+  - Rate limiting 준수
+  - robots.txt 정책 고려
+
+
