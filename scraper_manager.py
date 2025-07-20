@@ -277,6 +277,79 @@ class ScraperManager:
         # 실행 결과 요약
         self.print_summary()
     
+    def run_all_scrapers(self, batch_size: int = 30):
+        """모든 enhanced 스크래퍼를 배치로 실행 (30개씩)"""
+        available_scrapers = self.get_available_scrapers()
+        
+        if not available_scrapers:
+            logger.error("실행 가능한 스크래퍼가 없습니다.")
+            return
+        
+        total_scrapers = len(available_scrapers)
+        logger.info(f"전체 Enhanced 스크래퍼 실행 시작: 총 {total_scrapers}개")
+        logger.info(f"배치 크기: {batch_size}개씩 순차 실행")
+        logger.info(f"출력 디렉토리: {self.output_base_dir}")
+        logger.info(f"최대 페이지 수: {self.max_pages}")
+        
+        self.start_time = datetime.now()
+        total_completed = 0
+        batch_number = 1
+        
+        # 배치별로 처리
+        for i in range(0, total_scrapers, batch_size):
+            batch_scrapers = available_scrapers[i:i + batch_size]
+            batch_count = len(batch_scrapers)
+            
+            logger.info(f"\n{'='*60}")
+            logger.info(f"배치 {batch_number} 실행 시작: {batch_count}개 스크래퍼")
+            logger.info(f"전체 진행률: {total_completed}/{total_scrapers} ({(total_completed/total_scrapers)*100:.1f}%)")
+            logger.info(f"{'='*60}")
+            
+            batch_start_time = datetime.now()
+            
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # 배치 내 모든 스크래퍼 작업 제출
+                future_to_scraper = {
+                    executor.submit(self.run_single_scraper, scraper_file): scraper_file 
+                    for scraper_file in batch_scrapers
+                }
+                
+                # 배치 내 완료된 작업들 처리
+                batch_completed = 0
+                for future in as_completed(future_to_scraper):
+                    scraper_file = future_to_scraper[future]
+                    try:
+                        result = future.result()
+                        self.results[result['site_code']] = result
+                        batch_completed += 1
+                        total_completed += 1
+                        
+                        # 배치 진행률
+                        batch_progress = (batch_completed / batch_count) * 100
+                        # 전체 진행률
+                        total_progress = (total_completed / total_scrapers) * 100
+                        
+                        logger.info(f"배치 {batch_number} 진행률: {batch_progress:.1f}% ({batch_completed}/{batch_count}), "
+                                  f"전체 진행률: {total_progress:.1f}% ({total_completed}/{total_scrapers})")
+                        
+                    except Exception as exc:
+                        site_code = self.extract_site_code(scraper_file)
+                        logger.error(f"{site_code}: 예외 발생 - {exc}")
+                        total_completed += 1  # 실패해도 진행률에는 포함
+            
+            batch_duration = (datetime.now() - batch_start_time).total_seconds()
+            logger.info(f"배치 {batch_number} 완료: {batch_duration:.1f}초 소요")
+            
+            # 다음 배치가 있으면 잠시 대기
+            if i + batch_size < total_scrapers:
+                logger.info(f"다음 배치 시작 전 5초 대기...")
+                time.sleep(5)
+            
+            batch_number += 1
+        
+        # 전체 실행 결과 요약
+        self.print_summary()
+    
     def print_summary(self):
         """실행 결과 요약 출력"""
         if not self.results:
@@ -330,6 +403,10 @@ def main():
                        help='최대 동시 실행 워커 수 (기본값: 30)')
     parser.add_argument('--list', '-l', action='store_true',
                        help='사용 가능한 스크래퍼 목록 출력')
+    parser.add_argument('--all', '-a', action='store_true',
+                       help='모든 enhanced 스크래퍼를 30개씩 배치로 실행')
+    parser.add_argument('--batch-size', '-b', type=int, default=30,
+                       help='--all 옵션 사용 시 배치 크기 (기본값: 30)')
     
     args = parser.parse_args()
     
@@ -349,8 +426,12 @@ def main():
         return
     
     try:
-        # 병렬 스크래퍼 실행
-        manager.run_parallel_scrapers(args.count)
+        if args.all:
+            # 모든 스크래퍼를 배치로 실행
+            manager.run_all_scrapers(batch_size=args.batch_size)
+        else:
+            # 지정된 개수만큼 병렬 스크래퍼 실행
+            manager.run_parallel_scrapers(args.count)
         
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
