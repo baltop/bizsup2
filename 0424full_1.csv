@@ -180,11 +180,17 @@ knrec,한국에너지공단 신∙재생에너지센터,https://www.knrec.or.kr/
 changwon,창원특례시(창원시),https://www.changwon.go.kr/cwportal/10310/10429/10430.web    ##   지자체.
 cnfund,충남경제진흥원 중소기업 자금시스템,https://www.cnfund.kr/info/list.do?menuSeq=notice
 
+<<<<<<< Updated upstream
 
 exportcenter,중소기업수출지원센터(중소벤처기업부),https://www.smes.go.kr/exportcenter/information/notice/list.do
 
 
+=======
+exportcenter,중소기업수출지원센터(중소벤처기업부),https://www.smes.go.kr/exportcenter/information/notice/list.do
+
+>>>>>>> Stashed changes
 BIZ,산업통상자원부공시로 보이나 정확한 분류기준은 알기 어려움,
+
 nia,한국지능정보사회진흥원,https://www.nia.or.kr/site/nia_kor/ex/bbs/List.do?cbIdx=99835
 
 kdb,한국산업은행,https://onlending.kdb.co.kr/index.jsp
