@@ -179,7 +179,11 @@ knrec,한국에너지공단 신∙재생에너지센터,https://www.knrec.or.kr/
 
 changwon,창원특례시(창원시),https://www.changwon.go.kr/cwportal/10310/10429/10430.web    ##   지자체.
 cnfund,충남경제진흥원 중소기업 자금시스템,https://www.cnfund.kr/info/list.do?menuSeq=notice
+
+
 exportcenter,중소기업수출지원센터(중소벤처기업부),https://www.smes.go.kr/exportcenter/information/notice/list.do
+
+
 BIZ,산업통상자원부공시로 보이나 정확한 분류기준은 알기 어려움,
 nia,한국지능정보사회진흥원,https://www.nia.or.kr/site/nia_kor/ex/bbs/List.do?cbIdx=99835
 
@@ -203,9 +207,13 @@ dctf,동해문화관광재단,https://dctf.or.kr/bbs/board.php?bo_table=3_sub1
 gwse,강원지속가능경제지원센터,https://gwse.or.kr/bbs/board.php?bo_table=sub41&sca=%EC%82%AC%EC%97%85%EA%B3%B5%EA%B3%A0
 epis4,농림수산식품교육문화정보원,https://www.epis.or.kr/board/list?boardManagementNo=4&level=2&menuNo=3&enYn=N
 epis7,농림수산식품교육문화정보원,https://www.epis.or.kr/board/list?boardManagementNo=7&level=2&menuNo=7&enYn=N
+
 keci,한국환경보전원,https://www.keci.or.kr/common/bbs/selectPageListBbs.do?bbs_code=A1004
 ggeea,경기환경에너지진흥원,https://www.ggeea.or.kr/notice
+
+
 ijnto,전남관광재단,https://ijnto.or.kr/plaza/notice/lists/
+
 ekta,한국관광협회중앙회,http://www.ekta.kr/?act=board&bbs_code=sub4_2
     gbsa,경기도경제과학진흥원,https://www.gbsa.or.kr/board/notice.do
 jares,전라남도농업기술원,https://www.jares.go.kr/main/board/19
@@ -213,28 +221,42 @@ jares,전라남도농업기술원,https://www.jares.go.kr/main/board/19
     kofpi2,한국임업진흥원,https://www.kofpi.or.kr/notice/notice_02.do
     mof,해양수산부,https://www.mof.go.kr/doc/ko/selectDocList.do?menuSeq=375&bbsSeq=9&listUpdtDt=2025-04-07++10%3A00
 chungnam,충청남도농업기술원,https://cnnongup.chungnam.go.kr/board/B0013.cs?m=315
+
+
     dgtp,대구테크노파크,https://dgtp.or.kr/bbs/BoardControll.do?bbsId=BBSMSTR_000000000003
 ekape,축산물품질평가원,https://www.ekape.or.kr/board/list.do?menuId=menu149208&nextUrl=
 jbsecoop,전북사회적경제연대회의,http://www.jbsecoop.or.kr/bbs/board.php?bo_id=notice03
-mcst,문화체육관광부,https://www.mcst.go.kr/kor/s_notice/notice/noticeList.jsp
-suhyup,수협중앙회,https://www.suhyup.co.kr/suhyup/223/subview.do
-agrimst,충남농업마이스터대학,https://agrimst.com/bbs/board.php?bo_table=brd5_1&top=5&sub=1
+    mcst,문화체육관광부,https://www.mcst.go.kr/kor/s_notice/notice/noticeList.jsp
+    suhyup,수협중앙회,https://www.suhyup.co.kr/suhyup/223/subview.do
+    agrimst,충남농업마이스터대학,https://agrimst.com/bbs/board.php?bo_table=brd5_1&top=5&sub=1
 biz,KFISH 온라인 사업신청 통합시스템,https://biz.k-seafoodtrade.kr/apply/export_list.php
     ce,충북에너지산학융합원,https://pms.ce.or.kr/sub.php?code=02_bscm02&page=1
-gwgs,고성군 새올전자민원창구,https://eminwon.gwgs.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do
+    gwgs,고성군 새올전자민원창구,https://eminwon.gwgs.go.kr/emwp/gov/mogaha/ntis/web/ofr/action/OfrAction.do
 gg,경기도 해양수산자원연구소,https://fish.gg.go.kr/noti/27
+
+
 guroartsvalley,구로문화재단,https://guroartsvalley.or.kr/user/board/mn011801.do
 kepco,한국전력공사,https://home.kepco.co.kr/kepco/CY/K/ntcob/list.do?boardSeq=21069447&parnScrpSeq=21069447&depth=0&boardNo=0&boardCd=BRD_000039&replyRole=&pageIndex=1&searchKeyword=&searchCondition=&menuCd=FN02070501
 bacf,부안군문화재단,https://www.bacf.or.kr/base/board/list?boardManagementNo=2&menuLevel=2&menuNo=18
 dtmsa,대구전통시장진흥재단,https://www.dtmsa.or.kr/announcements
 ekr,한국농어촌공사,https://www.ekr.or.kr/planweb/board/list.krc?contentUid=402880317cc0644a017cc0c9da9f0120&boardUid=402880317cc0644a017cc5e8000f06b7&contentUid=402880317cc0644a017cc0c9da9f0120&subPath=
+
 energy,한국에너지공단,https://www.energy.or.kr/front/board/List2.do
+
 fira,한국수산자원공단,https://www.fira.or.kr/fira/fira_010101_1.jsp
+
 gafi,경기도농수산진흥원,https://www.gafi.or.kr/web/board/boardContentsListPage.do?board_id=42&menu_id=9d7a4fa3cd784b2ea1ab192315847444
 gbse,경상북도사회적경제지원센터,http://www.gbse.or.kr/HOME/gbse/sub.htm?nav_code=gbs1566979318
 geea,경북동부경영자협회,http://www.geea.or.kr/bbs/notice
+
 gidp,강원디자인진흥원,https://www.gidp.kr/gidp/notice/notification
+
 heemangfdn,재단법인 중소상공인희망재단,https://www.heemangfdn.or.kr/layout/res/home.php?go=pds.list&pds_type=1
+
+
 injeart,인제군문화재단,http://www.injeart.or.kr/?p=19&page=1
+
 jnse,전남사회적경제통합지원센터,http://www.jn-se.kr/bbs/board.php?bo_table=nco4_1
 sebiz,지역과소셜비즈,https://www.sebiz.or.kr/sub/board.html?bid=k1news
+
+# 07 20  all done

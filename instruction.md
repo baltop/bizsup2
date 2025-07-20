@@ -1,0 +1,14 @@
+- 주어진 URL의 사이트에 접속하여 enhanced scrapper를 개발하는 데 필요한 정보를 분석 추출한다.
+- @enhanced_base_scraper.py 를 상속하여 이전 단계에서 추출한 패턴에 맞는 방식으로 enhaced scrapper를 개발한다.
+- test를 할 경우 생성된 test py 코드는 test가 끝나면 삭제한다.
+- 최종 3페이지 수집 테스트는 enhanced scrapper 안에 main 으로 실행할 수 있게 코딩한다.
+- 즉 아무런 아규먼트 없이 enhanced scrapper를 실행하면 1에서 3페이지 까지 수집하여 output 폴더 아래에 사이트코드로 된 폴더를 생성하고 그 아래에 수집 내용을 저장한다.
+- 이중 실행 방지를 위한 processed_titles_enhanced{sitecode}.json 파일이 생성되는지 확인해야 한다.
+- 수집된 타이틀의 갯수가 3페이지까지 갯수가 맞는 지 확인한다.
+- 파일 다운로드는  각 타이틀의 attachemnts 폴더에 저장한다.
+- 첨부파일 저장이 제대로 되었는지 확인한다.
+- 첨부파일 이름이 한글명으로 잘 디코딩 되었는지 확인한다.
+- 첨부파일이 전부 같은 이름으로 저장되었거나 파일 크기가 전부 같으면 에러이므로 반드시 확인한다.
+- 수정하면서 enhanced_{sitecode}_scraper.py 파일을 수정하려면 기존에 작성된 파일을 수정해. 자꾸 enhanced_{sitecode}_scraper_nextversion.py enhanced_{sitecode}_scraper_final.py 등으로 새로운 파일을 만들지 말 것. 
+- 최종적으로 개발과 테스트 수집이 완료되면 enhanced_{sitecode}_scrapper.py 는 하나만 있어야 함. 추후 배치로 실행할 것이므로 실패한 파일이나 테스트 파일은 삭제할 것.
+- output 디렉토리 자체를 삭제해서는 절대 안되. 항상 저장과 삭제는 output/{sitecode} 디렉토리만 하고 이전 세션에서 저장한 것들은 삭제해서 안된다.
